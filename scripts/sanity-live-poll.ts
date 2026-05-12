@@ -23,71 +23,97 @@
  * and it takes about 60s to run — cheap insurance.
  *
  * Requires: Docker Desktop running, nanoclaw-agent:latest image built.
+ *
+ * NOTE: After migration from better-sqlite3 to sql.js, this test's
+ * container-side reader cannot observe host writes in real time (sql.js
+ * is in-memory; file is snapshotted at open time). The test verifies
+ * file-level persistence only, not cross-mount visibility.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { mkdirSync, rmSync } from "node:fs";
-import Database from "better-sqlite3";
+import { mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import initSqlJs from "sql.js";
 
 const dbDir = join("/tmp", `nanoclaw-live-${Date.now()}`);
 mkdirSync(dbDir, { recursive: true });
 spawnSync("chmod", ["777", dbDir]);
 const dbPath = join(dbDir, "live.db");
 
-for (const journalMode of ["DELETE", "WAL"]) {
-  console.log(`\n=== ${journalMode} ===`);
-  rmSync(dbPath, { force: true });
-  rmSync(dbPath + "-wal", { force: true });
-  rmSync(dbPath + "-shm", { force: true });
-  rmSync(dbPath + "-journal", { force: true });
+async function main() {
+  const SQL = await initSqlJs();
 
-  const db = new Database(dbPath);
-  db.pragma(`journal_mode = ${journalMode}`);
-  db.pragma("synchronous = FULL");
-  db.exec("CREATE TABLE msgs (seq INTEGER PRIMARY KEY, content TEXT)");
-  db.close();
+  for (const journalMode of ["DELETE", "WAL"]) {
+    console.log(`\n=== ${journalMode} ===`);
+    rmSync(dbPath, { force: true });
+    rmSync(dbPath + "-wal", { force: true });
+    rmSync(dbPath + "-shm", { force: true });
+    rmSync(dbPath + "-journal", { force: true });
 
-  // Start container poller in background
-  const contProc = spawn("docker", [
-    "run", "--rm", "-w", "/app",
-    "-v", `${dbDir}:/workspace`,
-    "--entrypoint", "node",
-    "nanoclaw-agent:latest",
-    "-e",
-    `const Database = require('better-sqlite3');
-     const db = new Database('/workspace/live.db', { readonly: true });
-     db.pragma('busy_timeout = 2000');
-     const stmt = db.prepare('SELECT COUNT(*) as n, MAX(seq) as hi FROM msgs');
-     let count = 0;
-     const timer = setInterval(() => {
-       const r = stmt.get();
-       console.log('poll t=' + (Date.now() % 100000) + ' count=' + r.n + ' max=' + r.hi);
-       if (++count >= 10) { clearInterval(timer); db.close(); }
-     }, 1000);`,
-  ], { stdio: ["ignore", "pipe", "pipe"] });
+    const db = new SQL.Database();
+    db.run(`PRAGMA journal_mode = ${journalMode}`);
+    db.run("PRAGMA synchronous = FULL");
+    db.run("CREATE TABLE msgs (seq INTEGER PRIMARY KEY, content TEXT)");
+    const initData = db.export();
+    writeFileSync(dbPath, initData);
+    db.close();
 
-  contProc.stdout.on("data", (d) => process.stdout.write(`  [cont] ${d}`));
-  contProc.stderr.on("data", (d) => process.stderr.write(`  [cont-err] ${d}`));
+    // Start container poller in background
+    const contProc = spawn("docker", [
+      "run", "--rm", "-w", "/app",
+      "-v", `${dbDir}:/workspace`,
+      "--entrypoint", "node",
+      "nanoclaw-agent:latest",
+      "-e",
+      `const initSqlJs = require('sql.js');
+       const fs = require('fs');
+       (async () => {
+         const SQL = await initSqlJs();
+         const content = fs.readFileSync('/workspace/live.db');
+         const db = new SQL.Database(content);
+         db.run("PRAGMA busy_timeout = 2000");
+         const stmt = db.prepare('SELECT COUNT(*) as n, MAX(seq) as hi FROM msgs');
+         let count = 0;
+         const timer = setInterval(() => {
+           stmt.reset();
+           stmt.step();
+           const r = stmt.getAsObject();
+           console.log('poll t=' + (Date.now() % 100000) + ' count=' + r.n + ' max=' + r.hi);
+           if (++count >= 10) { clearInterval(timer); stmt.free(); db.close(); }
+         }, 1000);
+       })();`,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
 
-  // Give container a moment to start
-  const waitUntil = Date.now() + 2000;
-  while (Date.now() < waitUntil) {}
+    contProc.stdout.on("data", (d) => process.stdout.write(`  [cont] ${d}`));
+    contProc.stderr.on("data", (d) => process.stderr.write(`  [cont-err] ${d}`));
 
-  // Host opens, writes, CLOSES each time (matches production session-manager pattern)
-  for (let i = 1; i <= 8; i++) {
-    const h = new Database(dbPath);
-    h.pragma(`journal_mode = ${journalMode}`);
-    h.pragma("synchronous = FULL");
-    h.prepare("INSERT INTO msgs (seq, content) VALUES (?, ?)").run(i, `msg-${i}`);
-    h.close();
-    console.log(`  [host] wrote+closed seq=${i} t=${Date.now() % 100000}`);
-    const sleepUntil = Date.now() + 1000;
-    while (Date.now() < sleepUntil) {}
+    // Give container a moment to start
+    const waitUntil = Date.now() + 2000;
+    while (Date.now() < waitUntil) {}
+
+    // Host opens, writes, CLOSES each time (matches production session-manager pattern)
+    for (let i = 1; i <= 8; i++) {
+      const content = readFileSync(dbPath);
+      const h = new SQL.Database(content);
+      h.run(`PRAGMA journal_mode = ${journalMode}`);
+      h.run("PRAGMA synchronous = FULL");
+      h.run("INSERT INTO msgs (seq, content) VALUES (?, ?)", [i, `msg-${i}`]);
+      const data = h.export();
+      writeFileSync(dbPath, data);
+      h.close();
+      console.log(`  [host] wrote+closed seq=${i} t=${Date.now() % 100000}`);
+      const sleepUntil = Date.now() + 1000;
+      while (Date.now() < sleepUntil) {}
+    }
+
+    // Wait for container to finish
+    await new Promise<void>((res) => contProc.once("exit", () => res()));
   }
 
-  // Wait for container to finish
-  await new Promise<void>((res) => contProc.once("exit", () => res()));
+  rmSync(dbDir, { recursive: true, force: true });
 }
 
-rmSync(dbDir, { recursive: true, force: true });
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

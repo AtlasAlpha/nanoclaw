@@ -10,6 +10,7 @@ import { DATA_DIR } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
 import { initDb } from './db/connection.js';
+import { initSql } from './db/sqlite-init.js';
 import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
@@ -62,9 +63,12 @@ async function main(): Promise<void> {
   // 0. Circuit breaker — backoff on rapid restarts
   await enforceStartupBackoff();
 
+  // 0b. Init sql.js (WASM) before any DB operations
+  await initSql();
+
   // 1. Init central DB
   const dbPath = path.join(DATA_DIR, 'v2.db');
-  const db = initDb(dbPath);
+  const db = await initDb(dbPath);
   runMigrations(db);
   log.info('Central DB ready', { path: dbPath });
 

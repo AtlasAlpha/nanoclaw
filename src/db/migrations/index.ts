@@ -1,6 +1,7 @@
-import type Database from 'better-sqlite3';
+import type { Database } from 'sql.js';
 
 import { log } from '../../log.js';
+import { queryAll, queryOne } from '../sql-helpers.js';
 import { migration001 } from './001-initial.js';
 import { migration002 } from './002-chat-sdk-state.js';
 import { moduleAgentToAgentDestinations } from './module-agent-to-agent-destinations.js';
@@ -16,7 +17,7 @@ import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js
 export interface Migration {
   version: number;
   name: string;
-  up: (db: Database.Database) => void;
+  up: (db: Database) => void;
 }
 
 const migrations: Migration[] = [
@@ -33,8 +34,8 @@ const migrations: Migration[] = [
   migration013,
 ];
 
-export function runMigrations(db: Database.Database): void {
-  db.exec(`
+export function runMigrations(db: Database): void {
+  db.run(`
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY,
       name    TEXT NOT NULL,
@@ -50,7 +51,7 @@ export function runMigrations(db: Database.Database): void {
   // the stored `version` column is auto-assigned at insert time as an
   // applied-order number.
   const applied = new Set<string>(
-    (db.prepare('SELECT name FROM schema_version').all() as { name: string }[]).map((r) => r.name),
+    queryAll<{ name: string }>(db, 'SELECT name FROM schema_version').map((r: { name: string }) => r.name),
   );
   const pending = migrations.filter((m) => !applied.has(m.name));
   if (pending.length === 0) return;
@@ -58,16 +59,21 @@ export function runMigrations(db: Database.Database): void {
   log.info('Running migrations', { count: pending.length });
 
   for (const m of pending) {
-    db.transaction(() => {
+    db.run('BEGIN');
+    try {
       m.up(db);
-      const next = (db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number })
-        .v;
-      db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
+      const row = queryOne<{ v: number }>(db, 'SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version');
+      const next = row!.v;
+      db.run('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)', [
         next,
         m.name,
         new Date().toISOString(),
-      );
-    })();
+      ]);
+      db.run('COMMIT');
+    } catch (e) {
+      db.run('ROLLBACK');
+      throw e;
+    }
     log.info('Migration applied', { name: m.name });
   }
 }

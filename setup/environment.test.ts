@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 
 /**
  * Tests for the environment check step.
@@ -33,19 +33,20 @@ describe('detectRegisteredGroups', () => {
 
   it('returns false when no registration state exists', async () => {
     const { detectRegisteredGroups } = await import('./environment.js');
-    expect(detectRegisteredGroups(tempDir)).toBe(false);
+    expect(await detectRegisteredGroups(tempDir)).toBe(false);
   });
 
   it('detects pre-migration registered_groups.json', async () => {
     const { detectRegisteredGroups } = await import('./environment.js');
     fs.writeFileSync(path.join(tempDir, 'data', 'registered_groups.json'), '[]');
-    expect(detectRegisteredGroups(tempDir)).toBe(true);
+    expect(await detectRegisteredGroups(tempDir)).toBe(true);
   });
 
   it('returns false for an empty v2 central DB', async () => {
     const { detectRegisteredGroups } = await import('./environment.js');
-    const db = new Database(path.join(tempDir, 'data', 'v2.db'));
-    db.exec(`
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run(`
       CREATE TABLE agent_groups (id TEXT PRIMARY KEY);
       CREATE TABLE messaging_group_agents (
         id TEXT PRIMARY KEY,
@@ -53,15 +54,18 @@ describe('detectRegisteredGroups', () => {
         agent_group_id TEXT NOT NULL
       );
     `);
+    const data = db.export();
+    fs.writeFileSync(path.join(tempDir, 'data', 'v2.db'), Buffer.from(data));
     db.close();
 
-    expect(detectRegisteredGroups(tempDir)).toBe(false);
+    expect(await detectRegisteredGroups(tempDir)).toBe(false);
   });
 
   it('detects wired agent groups in the v2 central DB', async () => {
     const { detectRegisteredGroups } = await import('./environment.js');
-    const db = new Database(path.join(tempDir, 'data', 'v2.db'));
-    db.exec(`
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run(`
       CREATE TABLE agent_groups (id TEXT PRIMARY KEY);
       CREATE TABLE messaging_group_agents (
         id TEXT PRIMARY KEY,
@@ -69,13 +73,16 @@ describe('detectRegisteredGroups', () => {
         agent_group_id TEXT NOT NULL
       );
     `);
-    db.prepare('INSERT INTO agent_groups (id) VALUES (?)').run('ag-1');
-    db.prepare(
+    db.run('INSERT INTO agent_groups (id) VALUES (?)', ['ag-1']);
+    db.run(
       'INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id) VALUES (?, ?, ?)',
-    ).run('mga-1', 'mg-1', 'ag-1');
+      ['mga-1', 'mg-1', 'ag-1'],
+    );
+    const data = db.export();
+    fs.writeFileSync(path.join(tempDir, 'data', 'v2.db'), Buffer.from(data));
     db.close();
 
-    expect(detectRegisteredGroups(tempDir)).toBe(true);
+    expect(await detectRegisteredGroups(tempDir)).toBe(true);
   });
 });
 

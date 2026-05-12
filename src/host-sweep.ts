@@ -26,7 +26,8 @@
  *        → kill + reset this message + tries++. Semantics: "container
  *        claimed a message and went quiet past tolerance since the claim."
  */
-import type Database from 'better-sqlite3';
+import type { Database } from 'sql.js';
+import { queryAll } from './db/sql-helpers.js';
 import fs from 'fs';
 
 import { getActiveSessions } from './db/sessions.js';
@@ -38,12 +39,13 @@ import {
   getMessageForRetry,
   getProcessingClaims,
   markMessageFailed,
+  persistDb,
   retryWithBackoff,
   syncProcessingAcks,
   type ContainerState,
 } from './db/session-db.js';
 import { log } from './log.js';
-import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
+import { clearInbox, openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, outboundDbPath, heartbeatPath } from './session-manager.js';
 import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
 
@@ -151,8 +153,8 @@ async function sweepSession(session: Session): Promise<void> {
   const inPath = inboundDbPath(agentGroup.id, session.id);
   if (!fs.existsSync(inPath)) return;
 
-  let inDb: Database.Database;
-  let outDb: Database.Database | null = null;
+  let inDb: Database;
+  let outDb: Database | null = null;
   try {
     inDb = openInboundDb(agentGroup.id, session.id);
   } catch {
@@ -169,6 +171,16 @@ async function sweepSession(session: Session): Promise<void> {
     // 1. Sync processing_ack → messages_in status
     if (outDb) {
       syncProcessingAcks(inDb, outDb);
+      persistDb(inDb, inPath);
+
+      // Clean inbox directories for completed inbound messages
+      const completedIds = queryAll<{ message_id: string }>(
+        outDb,
+        "SELECT message_id FROM processing_ack WHERE status IN ('completed', 'failed')",
+      ).map((r) => r.message_id);
+      for (const mid of completedIds) {
+        clearInbox(session.agent_group_id, session.id, mid);
+      }
     }
 
     // 2. Wake a container if work is due and nothing is running. Ordered
@@ -226,8 +238,8 @@ function bashTimeoutMs(state: ContainerState | null): number | null {
 }
 
 function enforceRunningContainerSla(
-  inDb: Database.Database,
-  outDb: Database.Database,
+  inDb: Database,
+  outDb: Database,
   session: Session,
   agentGroupId: string,
 ): void {
@@ -262,8 +274,8 @@ function enforceRunningContainerSla(
 }
 
 export function _resetStuckProcessingRowsForTesting(
-  inDb: Database.Database,
-  outDb: Database.Database,
+  inDb: Database,
+  outDb: Database,
   session: Session,
   reason: string,
 ): void {
@@ -271,11 +283,11 @@ export function _resetStuckProcessingRowsForTesting(
 }
 
 function resetStuckProcessingRows(
-  inDb: Database.Database,
-  outDb: Database.Database,
+  inDb: Database,
+  outDb: Database,
   session: Session,
   reason: string,
-  writableOutDb?: Database.Database,
+  writableOutDb?: Database,
 ): void {
   const claims = getProcessingClaims(outDb);
   const now = Date.now();
@@ -308,17 +320,27 @@ function resetStuckProcessingRows(
     }
   }
 
+  // Persist inDb changes (retryWithBackoff / markMessageFailed wrote to it)
+  // We need the path — derive it from the session
+  const inPath = inboundDbPath(session.agent_group_id, session.id);
+  persistDb(inDb, inPath);
+
   // Drop the orphan 'processing' rows. Without this, the next sweep tick
   // would re-read them, see the old status_changed timestamp, conclude the
   // freshly respawned container is stuck, and SIGKILL it before its
   // agent-runner has a chance to run clearStaleProcessingAcks() on startup.
   const ownsDb = !writableOutDb;
-  let useDb: Database.Database | null = writableOutDb ?? null;
+  let useDb: Database | null = writableOutDb ?? null;
   try {
     if (!useDb) useDb = openOutboundDbRw(session.agent_group_id, session.id);
     const cleared = deleteOrphanProcessingClaims(useDb);
     if (cleared > 0) {
       log.info('Cleared orphan processing claims', { sessionId: session.id, cleared, reason });
+      // Persist outDb if we opened it ourselves
+      if (ownsDb) {
+        const outPath = outboundDbPath(session.agent_group_id, session.id);
+        persistDb(useDb, outPath);
+      }
     }
   } catch (err) {
     log.warn('Failed to clear orphan processing claims', { sessionId: session.id, err });

@@ -1,4 +1,5 @@
 import { getDb } from './connection.js';
+import { queryAll } from './sql-helpers.js';
 
 export interface UnregisteredSender {
   channel_type: string;
@@ -23,22 +24,23 @@ export function recordDroppedMessage(msg: {
   agent_group_id: string | null;
 }): void {
   const now = new Date().toISOString();
-  getDb()
-    .prepare(
-      `INSERT INTO unregistered_senders (channel_type, platform_id, user_id, sender_name, reason, messaging_group_id, agent_group_id, message_count, first_seen, last_seen)
-       VALUES (@channel_type, @platform_id, @user_id, @sender_name, @reason, @messaging_group_id, @agent_group_id, 1, @now, @now)
-       ON CONFLICT (channel_type, platform_id) DO UPDATE SET
-         user_id = COALESCE(excluded.user_id, unregistered_senders.user_id),
-         sender_name = COALESCE(excluded.sender_name, unregistered_senders.sender_name),
-         reason = excluded.reason,
-         message_count = unregistered_senders.message_count + 1,
-         last_seen = excluded.last_seen`,
-    )
-    .run({ ...msg, now });
+  getDb().run(
+    `INSERT INTO unregistered_senders (channel_type, platform_id, user_id, sender_name, reason, messaging_group_id, agent_group_id, message_count, first_seen, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+     ON CONFLICT (channel_type, platform_id) DO UPDATE SET
+       user_id = COALESCE(excluded.user_id, unregistered_senders.user_id),
+       sender_name = COALESCE(excluded.sender_name, unregistered_senders.sender_name),
+       reason = excluded.reason,
+       message_count = unregistered_senders.message_count + 1,
+       last_seen = excluded.last_seen`,
+    [msg.channel_type, msg.platform_id, msg.user_id, msg.sender_name, msg.reason, msg.messaging_group_id, msg.agent_group_id, now, now],
+  );
 }
 
 export function getUnregisteredSenders(limit = 50): UnregisteredSender[] {
-  return getDb()
-    .prepare('SELECT * FROM unregistered_senders ORDER BY last_seen DESC LIMIT ?')
-    .all(limit) as UnregisteredSender[];
+  return queryAll<UnregisteredSender>(
+    getDb(),
+    'SELECT * FROM unregistered_senders ORDER BY last_seen DESC LIMIT ?',
+    [limit],
+  );
 }

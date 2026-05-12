@@ -8,7 +8,7 @@
  *
  * Usage: pnpm exec tsx scripts/test-v2-host.ts
  */
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -73,6 +73,8 @@ import { routeInbound } from '../src/router.js';
 import { findSession } from '../src/db/sessions.js';
 import { inboundDbPath, outboundDbPath } from '../src/session-manager.js';
 
+const SQL = await initSqlJs();
+
 await routeInbound({
   channelType: 'test',
   platformId: 'e2e-channel',
@@ -109,10 +111,14 @@ const TIMEOUT_MS = 120_000;
 
 const checkForResponse = (): boolean => {
   try {
-    const db = new Database(outDbPath, { readonly: true });
-    const out = db.prepare('SELECT * FROM messages_out').all() as Array<Record<string, unknown>>;
+    const content = fs.readFileSync(outDbPath);
+    const db = new SQL.Database(content);
+    const stmt = db.prepare('SELECT * FROM messages_out');
+    let count = 0;
+    while (stmt.step()) count++;
+    stmt.free();
     db.close();
-    return out.length > 0;
+    return count > 0;
   } catch {
     return false;
   }
@@ -149,8 +155,14 @@ process.exit(0);
 
 function printState() {
   try {
-    const inDb = new Database(inDbPath, { readonly: true });
-    const inRows = inDb.prepare('SELECT * FROM messages_in').all() as Array<Record<string, unknown>>;
+    const content = fs.readFileSync(inDbPath);
+    const inDb = new SQL.Database(content);
+    const stmt1 = inDb.prepare('SELECT * FROM messages_in');
+    const inRows: Array<Record<string, unknown>> = [];
+    while (stmt1.step()) {
+      inRows.push(stmt1.getAsObject() as Record<string, unknown>);
+    }
+    stmt1.free();
     inDb.close();
 
     console.log('\nmessages_in (inbound.db):');
@@ -162,9 +174,21 @@ function printState() {
   }
 
   try {
-    const outDb = new Database(outDbPath, { readonly: true });
-    const outRows = outDb.prepare('SELECT * FROM messages_out').all() as Array<Record<string, unknown>>;
-    const ackRows = outDb.prepare('SELECT * FROM processing_ack').all() as Array<Record<string, unknown>>;
+    const content = fs.readFileSync(outDbPath);
+    const outDb = new SQL.Database(content);
+    const stmt2 = outDb.prepare('SELECT * FROM messages_out');
+    const outRows: Array<Record<string, unknown>> = [];
+    while (stmt2.step()) {
+      outRows.push(stmt2.getAsObject() as Record<string, unknown>);
+    }
+    stmt2.free();
+
+    const stmt3 = outDb.prepare('SELECT * FROM processing_ack');
+    const ackRows: Array<Record<string, unknown>> = [];
+    while (stmt3.step()) {
+      ackRows.push(stmt3.getAsObject() as Record<string, unknown>);
+    }
+    stmt3.free();
     outDb.close();
 
     console.log('\nmessages_out (outbound.db):');

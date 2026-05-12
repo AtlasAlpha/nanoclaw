@@ -3,10 +3,10 @@
  * Tests routing, session creation, message writing, and delivery
  * without spawning actual containers.
  */
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
 
 import {
   initTestDb,
@@ -29,7 +29,11 @@ import {
 import { getSession, findSession } from './db/sessions.js';
 import type { InboundEvent } from './channels/adapter.js';
 
-// Mock container runner to prevent actual Docker spawning
+let SQL: Awaited<ReturnType<typeof initSqlJs>>;
+beforeAll(async () => {
+  SQL = await initSqlJs();
+});
+
 vi.mock('./container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
   isContainerRunning: vi.fn().mockReturnValue(false),
@@ -37,7 +41,6 @@ vi.mock('./container-runner.js', () => ({
   killContainer: vi.fn(),
 }));
 
-// Override DATA_DIR for tests
 vi.mock('./config.js', async () => {
   const actual = await vi.importActual('./config.js');
   return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-host' };
@@ -49,12 +52,11 @@ function now() {
 
 const TEST_DIR = '/tmp/nanoclaw-test-host';
 
-beforeEach(() => {
-  // Clean test directory
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
 
-  const db = initTestDb();
+  const db = await initTestDb();
   runMigrations(db);
 });
 
@@ -89,22 +91,26 @@ describe('session manager', () => {
     expect(fs.existsSync(dir)).toBe(true);
     expect(fs.existsSync(path.join(dir, 'outbox'))).toBe(true);
 
-    // Verify inbound.db
     const inPath = inboundDbPath('ag-1', 'sess-test');
     expect(fs.existsSync(inPath)).toBe(true);
-    const inDb = new Database(inPath);
-    const inTables = inDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+    const inContent = fs.readFileSync(inPath);
+    const inDb = new SQL.Database(inContent);
+    const inStmt = inDb.prepare("SELECT name FROM sqlite_master WHERE type='table'");
+    const inTables: Array<{ name: string }> = [];
+    while (inStmt.step()) inTables.push(inStmt.getAsObject() as { name: string });
+    inStmt.free();
     expect(inTables.map((t) => t.name)).toContain('messages_in');
     expect(inTables.map((t) => t.name)).toContain('delivered');
     inDb.close();
 
-    // Verify outbound.db
     const outPath = outboundDbPath('ag-1', 'sess-test');
     expect(fs.existsSync(outPath)).toBe(true);
-    const outDb = new Database(outPath);
-    const outTables = outDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{
-      name: string;
-    }>;
+    const outContent = fs.readFileSync(outPath);
+    const outDb = new SQL.Database(outContent);
+    const outStmt = outDb.prepare("SELECT name FROM sqlite_master WHERE type='table'");
+    const outTables: Array<{ name: string }> = [];
+    while (outStmt.step()) outTables.push(outStmt.getAsObject() as { name: string });
+    outStmt.free();
     expect(outTables.map((t) => t.name)).toContain('messages_out');
     expect(outTables.map((t) => t.name)).toContain('processing_ack');
     outDb.close();
@@ -166,8 +172,6 @@ describe('session manager', () => {
     initSessionFolder('ag-1', 'sess-test');
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
 
-    // The container has /workspace write access, so it can pre create
-    // inbox/<msgId> as a symlink to escape.
     const inboxRoot = path.join(sessionDir('ag-1', session.id), 'inbox');
     fs.mkdirSync(inboxRoot, { recursive: true });
     const evilTarget = path.join(TEST_DIR, 'evil-target');
@@ -191,8 +195,6 @@ describe('session manager', () => {
     initSessionFolder('ag-1', 'sess-test');
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
 
-    // The container pre creates inbox/<msgId>/photo.png as a symlink to a
-    // host file. Without the wx flag, writeFileSync would follow it.
     const inboxDir = path.join(sessionDir('ag-1', session.id), 'inbox', 'msg-sym');
     fs.mkdirSync(inboxDir, { recursive: true });
     const outside = path.join(TEST_DIR, 'outside.txt');
@@ -286,15 +288,23 @@ describe('session manager', () => {
       content: JSON.stringify({ sender: 'User', text: 'Hello' }),
     });
 
-    // Read from the inbound DB
     const dbPath = inboundDbPath('ag-1', session.id);
-    const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{
+    const dbContent = fs.readFileSync(dbPath);
+    const db = new SQL.Database(dbContent);
+    const stmt = db.prepare('SELECT * FROM messages_in');
+    const rows: Array<{
       id: string;
       kind: string;
       status: string;
       content: string;
-    }>;
+    }> = [];
+    while (stmt.step()) rows.push(stmt.getAsObject() as {
+      id: string;
+      kind: string;
+      status: string;
+      content: string;
+    });
+    stmt.free();
     db.close();
 
     expect(rows).toHaveLength(1);
@@ -318,10 +328,6 @@ describe('session manager', () => {
   });
 
   it('should refuse path-traversal in attachment filenames', () => {
-    // Regression: attachment.name comes from untrusted senders (E2EE-protected
-    // chat platforms can't sanitize it server-side). Without the guard, a
-    // `../../../tmp/pwned` filename escapes the inbox dir and writes anywhere
-    // the host process can reach.
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
     const inboxBase = path.join(sessionDir('ag-1', session.id), 'inbox');
     const escapeTarget = path.join('/tmp', 'nanoclaw-traversal-canary');
@@ -344,8 +350,6 @@ describe('session manager', () => {
     });
 
     expect(fs.existsSync(escapeTarget)).toBe(false);
-    // The bytes should still land — under a synthesized safe name inside the
-    // inbox — so the agent doesn't lose data on a malicious filename.
     const inboxDir = path.join(inboxBase, 'msg-attack');
     expect(fs.existsSync(inboxDir)).toBe(true);
     const written = fs.readdirSync(inboxDir);
@@ -364,8 +368,6 @@ describe('router', () => {
       agent_provider: null,
       created_at: now(),
     });
-    // Use 'public' policy so the router tests exercise routing, not the
-    // access gate. Dedicated access-gate tests live with the access module.
     createMessagingGroup({
       id: 'mg-1',
       channel_type: 'discord',
@@ -407,32 +409,28 @@ describe('router', () => {
 
     await routeInbound(event);
 
-    // Verify session was created
     const session = findSession('mg-1', null);
     expect(session).toBeDefined();
 
-    // Verify message was written to inbound DB
     const dbPath = inboundDbPath('ag-1', session!.id);
-    const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{ id: string; content: string }>;
+    const dbContent = fs.readFileSync(dbPath);
+    const db = new SQL.Database(dbContent);
+    const stmt = db.prepare('SELECT * FROM messages_in');
+    const rows: Array<{ id: string; content: string }> = [];
+    while (stmt.step()) rows.push(stmt.getAsObject() as { id: string; content: string });
+    stmt.free();
     db.close();
 
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0].content).text).toBe('Hello agent!');
 
-    // Verify container was woken
     expect(wakeContainer).toHaveBeenCalled();
   });
 
   it('auto-creates messaging group only when the bot is addressed (mention/DM)', async () => {
-    // The router's no-mg branch is escalation-gated: plain chatter on an
-    // unknown channel stays silent (no DB writes) so a bot that sits in
-    // many unwired channels doesn't bloat messaging_groups. Only explicit
-    // mentions and DMs trigger auto-create.
     const { routeInbound } = await import('./router.js');
     const { getMessagingGroupByPlatform } = await import('./db/messaging-groups.js');
 
-    // Plain message on unknown channel — should NOT auto-create.
     await routeInbound({
       channelType: 'slack',
       platformId: 'C-PLAIN',
@@ -446,7 +444,6 @@ describe('router', () => {
     });
     expect(getMessagingGroupByPlatform('slack', 'C-PLAIN')).toBeUndefined();
 
-    // Mention on unknown channel — SHOULD auto-create (next step: channel-registration flow).
     await routeInbound({
       channelType: 'slack',
       platformId: 'C-MENTIONED',
@@ -484,11 +481,14 @@ describe('router', () => {
       },
     });
 
-    // Both should be in the same session
     const session = findSession('mg-1', null);
     const dbPath = inboundDbPath('ag-1', session!.id);
-    const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM messages_in ORDER BY timestamp').all();
+    const dbContent = fs.readFileSync(dbPath);
+    const db = new SQL.Database(dbContent);
+    const stmt = db.prepare('SELECT * FROM messages_in ORDER BY timestamp');
+    const rows: any[] = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    stmt.free();
     db.close();
 
     expect(rows).toHaveLength(2);
@@ -499,7 +499,6 @@ describe('router', () => {
     const { wakeContainer } = await import('./container-runner.js');
     (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    // Wire a second agent to the same messaging group.
     createAgentGroup({
       id: 'ag-2',
       name: 'Secondary Agent',
@@ -527,7 +526,6 @@ describe('router', () => {
       message: { id: 'msg-fan', kind: 'chat', content: JSON.stringify({ text: 'hello all' }), timestamp: now() },
     });
 
-    // Both agents should now have their own session and be woken.
     expect(wakeContainer).toHaveBeenCalledTimes(2);
 
     const { getSessionsByAgentGroup } = await import('./db/sessions.js');
@@ -540,8 +538,6 @@ describe('router', () => {
     const { wakeContainer } = await import('./container-runner.js');
     (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    // Replace the seed row with a mention-only wiring whose accumulate
-    // policy should store context even when the message doesn't mention us.
     const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
     updateMessagingGroupAgent('mga-1', {
       engage_mode: 'mention',
@@ -564,11 +560,12 @@ describe('router', () => {
 
     const session = findSession('mg-1', null);
     expect(session).toBeDefined();
-    const db = new Database(inboundDbPath('ag-1', session!.id));
-    const rows = db.prepare('SELECT id, trigger FROM messages_in').all() as Array<{
-      id: string;
-      trigger: number;
-    }>;
+    const dbContent = fs.readFileSync(inboundDbPath('ag-1', session!.id));
+    const db = new SQL.Database(dbContent);
+    const stmt = db.prepare('SELECT id, trigger FROM messages_in');
+    const rows: Array<{ id: string; trigger: number }> = [];
+    while (stmt.step()) rows.push(stmt.getAsObject() as { id: string; trigger: number });
+    stmt.free();
     db.close();
     expect(rows).toHaveLength(1);
     expect(rows[0].trigger).toBe(0);
@@ -580,7 +577,7 @@ describe('router', () => {
     (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
 
     const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
-    updateMessagingGroupAgent('mga-1', { engage_mode: 'mention' }); // drop is the default
+    updateMessagingGroupAgent('mga-1', { engage_mode: 'mention' });
 
     await routeInbound({
       channelType: 'discord',
@@ -590,7 +587,6 @@ describe('router', () => {
     });
 
     expect(wakeContainer).not.toHaveBeenCalled();
-    // No session should have been created for this agent.
     expect(findSession('mg-1', null)).toBeUndefined();
   });
 });
@@ -616,18 +612,19 @@ describe('delivery', () => {
 
     const { session } = resolveSession('ag-1', 'mg-test', null, 'shared');
 
-    // Write a response to the outbound DB (simulating what the agent-runner does)
     const dbPath = outboundDbPath('ag-1', session.id);
-    const db = new Database(dbPath);
-    db.prepare(
+    const dbContent = fs.readFileSync(dbPath);
+    const db = new SQL.Database(dbContent);
+    db.run(
       `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
        VALUES ('out-1', datetime('now'), 'chat', 'chan-123', 'discord', ?)`,
-    ).run(JSON.stringify({ text: 'Agent response' }));
+      [JSON.stringify({ text: 'Agent response' })],
+    );
 
-    const undelivered = db.prepare('SELECT * FROM messages_out').all() as Array<{
-      id: string;
-      content: string;
-    }>;
+    const stmt = db.prepare('SELECT * FROM messages_out');
+    const undelivered: Array<{ id: string; content: string }> = [];
+    while (stmt.step()) undelivered.push(stmt.getAsObject() as { id: string; content: string });
+    stmt.free();
     db.close();
 
     expect(undelivered).toHaveLength(1);

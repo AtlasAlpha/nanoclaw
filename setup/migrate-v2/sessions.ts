@@ -20,7 +20,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 
 import { DATA_DIR } from '../../src/config.js';
 import { initDb, closeDb } from '../../src/db/connection.js';
@@ -59,7 +59,7 @@ function copyTree(src: string, dst: string): number {
   return written;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const v1Path = process.argv[2];
   if (!v1Path) {
     console.error('Usage: tsx setup/migrate-v2/sessions.ts <v1-path>');
@@ -87,6 +87,8 @@ function main(): void {
   for (const ag of agentGroups) {
     folderToAg.set(ag.folder, ag);
   }
+
+  const SQL = await initSqlJs();
 
   let sessionsCreated = 0;
   let sessionsReused = 0;
@@ -163,10 +165,14 @@ function main(): void {
             const { session } = resolveSession(ag.id, mg.id, null, 'shared');
             const obPath = outboundDbPath(ag.id, session.id);
             if (fs.existsSync(obPath)) {
-              const ob = new Database(obPath);
-              ob.prepare(
-                "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('continuation:claude', ?, ?)",
-              ).run(v1SessionId, new Date().toISOString());
+              const content = fs.readFileSync(obPath);
+              const ob = new SQL.Database(content);
+              ob.run(
+                "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES (?, ?, ?)",
+                [v1SessionId, new Date().toISOString()],
+              );
+              const data = ob.export();
+              fs.writeFileSync(obPath, Buffer.from(data));
               ob.close();
             }
           }

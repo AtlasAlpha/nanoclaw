@@ -17,22 +17,22 @@
  *      while the card is pending is silently dropped by INSERT OR IGNORE,
  *      preventing card spam.
  */
-import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
+import { queryAll } from '../sql-helpers.js';
 
 export const migration012: Migration = {
   version: 12,
   name: 'channel-registration',
-  up: (db: Database.Database) => {
+  up: (db) => {
     // 1. Add denied_at to messaging_groups. Idempotent guard in case the
     //    column was added by some other path before this migration ran.
-    const cols = db.prepare("PRAGMA table_info('messaging_groups')").all() as Array<{ name: string }>;
-    if (!cols.some((c) => c.name === 'denied_at')) {
-      db.exec(`ALTER TABLE messaging_groups ADD COLUMN denied_at TEXT`);
+    const cols = queryAll<{ name: string }>(db, "PRAGMA table_info('messaging_groups')");
+    if (!cols.some((c: { name: string }) => c.name === 'denied_at')) {
+      db.run(`ALTER TABLE messaging_groups ADD COLUMN denied_at TEXT`);
     }
 
     // 2. pending_channel_approvals.
-    db.exec(`
+    db.run(`
       CREATE TABLE IF NOT EXISTS pending_channel_approvals (
         messaging_group_id   TEXT PRIMARY KEY REFERENCES messaging_groups(id),
         agent_group_id       TEXT NOT NULL REFERENCES agent_groups(id),

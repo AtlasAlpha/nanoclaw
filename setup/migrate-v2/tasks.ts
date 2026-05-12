@@ -13,7 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 
 import { DATA_DIR } from '../../src/config.js';
 import { initDb, closeDb } from '../../src/db/connection.js';
@@ -83,8 +83,15 @@ async function main(): Promise<void> {
   }
 
   // Read v1 tasks
-  const v1Db = new Database(v1DbPath, { readonly: true, fileMustExist: true });
-  const allTasks = v1Db.prepare('SELECT * FROM scheduled_tasks').all() as V1Task[];
+  const SQL = await initSqlJs();
+  const content = fs.readFileSync(v1DbPath);
+  const v1Db = new SQL.Database(content);
+  const stmt = v1Db.prepare('SELECT * FROM scheduled_tasks');
+  const allTasks: V1Task[] = [];
+  while (stmt.step()) {
+    allTasks.push(stmt.getAsObject() as V1Task);
+  }
+  stmt.free();
   v1Db.close();
 
   const activeTasks = allTasks.filter((t) => t.status === 'active');

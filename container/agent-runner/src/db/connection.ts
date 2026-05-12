@@ -48,7 +48,16 @@ export function openInboundDb(): Database {
   // so the singleton survives for the rest of the test.
   if (_testMode && _inbound) {
     const db = _inbound;
-    return { prepare: (sql: string) => db.prepare(sql), exec: (sql: string) => db.exec(sql), close: () => {} } as unknown as Database;
+    const proxy = {
+      prepare: (sql: string) => db.prepare(sql),
+      exec: (sql: string) => db.exec(sql),
+      close: () => {},
+      transaction: <T>(fn: (...args: unknown[]) => T) => db.transaction(fn),
+      run: (...args: unknown[]) => db.run(...args as [string, ...unknown[]]),
+      get: (...args: unknown[]) => db.prepare(args[0] as string).get(...args.slice(1)),
+      all: (...args: unknown[]) => db.prepare(args[0] as string).all(...args.slice(1)),
+    } as unknown as Database;
+    return proxy;
   }
   const db = new Database(DEFAULT_INBOUND_PATH, { readonly: true });
   db.exec('PRAGMA busy_timeout = 5000');

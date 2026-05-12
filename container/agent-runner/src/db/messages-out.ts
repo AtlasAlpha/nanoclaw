@@ -42,19 +42,8 @@ export interface WriteMessageOut {
  * by seq across BOTH tables. If inbound and outbound could share a seq,
  * the agent's "edit message #5" could resolve to the wrong row.
  */
-export function writeMessageOut(msg: WriteMessageOut): number {
+function insertMessageOutRow(msg: WriteMessageOut, nextSeq: number): void {
   const outbound = getOutboundDb();
-  const inbound = getInboundDb();
-
-  // Read max seq from both DBs to maintain global ordering.
-  // Safe: each side only reads the other DB, never writes to it.
-  const maxOut = (outbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
-  const maxIn = (inbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
-  const max = Math.max(maxOut, maxIn);
-  const nextSeq = max % 2 === 0 ? max + 1 : max + 2; // next odd
-
-  // bun:sqlite requires named parameters to be passed with the prefix character
-  // in the JS object keys (better-sqlite3 auto-stripped it, bun:sqlite does not).
   outbound
     .prepare(
       `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, thread_id, content)
@@ -72,8 +61,28 @@ export function writeMessageOut(msg: WriteMessageOut): number {
       $thread_id: msg.thread_id ?? null,
       $content: msg.content,
     });
+}
 
-  return nextSeq;
+export function writeMessageOut(msg: WriteMessageOut): number {
+  const outbound = getOutboundDb();
+  const inbound = getInboundDb();
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const maxOut = (outbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
+    const maxIn = (inbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
+    const max = Math.max(maxOut, maxIn);
+    const nextSeq = max % 2 === 0 ? max + 1 : max + 2;
+
+    try {
+      insertMessageOutRow(msg, nextSeq);
+      return nextSeq;
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      if (e?.message?.includes('UNIQUE')) continue;
+      throw err;
+    }
+  }
+  throw new Error('writeMessageOut: failed to acquire unique seq after 3 attempts');
 }
 
 /**
@@ -136,7 +145,7 @@ export function getUndeliveredMessages(): MessageOutRow[] {
   return getOutboundDb()
     .prepare(
       `SELECT * FROM messages_out
-       WHERE (deliver_after IS NULL OR deliver_after <= datetime('now'))
+       WHERE (deliver_after IS NULL OR deliver_after <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        ORDER BY timestamp ASC`,
     )
     .all() as MessageOutRow[];

@@ -265,8 +265,17 @@ async function processQuery(
   // will kill the container and messages get reset to pending.
   let pollInFlight = false;
   let endedForCommand = false;
+  let consecutivePollErrors = 0;
+  const POLL_BACKOFF_MAX_MS = 30_000;
   const pollHandle = setInterval(() => {
     if (done || pollInFlight || endedForCommand) return;
+    // Backoff on consecutive errors to avoid tight loop on corrupt DB
+    if (consecutivePollErrors > 0) {
+      const backoff = Math.min(POLL_BACKOFF_MAX_MS, Math.pow(2, consecutivePollErrors) * 1000);
+      if (consecutivePollErrors > 5) {
+        log(`Follow-up poll backed off (${consecutivePollErrors} consecutive errors, ${backoff}ms)`);
+      }
+    }
     pollInFlight = true;
 
     void (async () => {
@@ -317,24 +326,32 @@ async function processQuery(
         }
         // MODULE-HOOK:scheduling-pre-task-followup:end
 
-        if (keep.length === 0) return;
+        if (keep.length === 0) {
+          consecutivePollErrors = 0;
+          return;
+        }
         // Re-check done — the outer query may have finished while the script
         // was awaited. Pushing into a closed stream is wasted work; the
         // claimed messages get released by the host's processing-claim sweep.
-        if (done) return;
+        if (done) {
+          consecutivePollErrors = 0;
+          return;
+        }
 
         const keptIds = keep.map((m) => m.id);
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         query.push(prompt);
         markCompleted(keptIds);
+        consecutivePollErrors = 0;
       } catch (err) {
         // Without this catch the rejection escapes the void IIFE and Node
         // terminates the container on unhandled-rejection. The initial-batch
         // path is wrapped by processQuery's outer try/catch; the follow-up
         // path is not, so it needs its own.
+        consecutivePollErrors++;
         const errMsg = err instanceof Error ? err.message : String(err);
-        log(`Follow-up poll error: ${errMsg}`);
+        log(`Follow-up poll error (${consecutivePollErrors} consecutive): ${errMsg}`);
       } finally {
         pollInFlight = false;
       }

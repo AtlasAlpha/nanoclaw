@@ -8,8 +8,9 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import { initSql } from '../../db/sqlite-init.js';
 import { ensureSchema, openInboundDb } from '../../db/session-db.js';
 import { insertTask } from './db.js';
 import { handleRecurrence } from './recurrence.js';
@@ -17,6 +18,10 @@ import type { Session } from '../../types.js';
 
 const TEST_DIR = '/tmp/nanoclaw-recurrence-test';
 const DB_PATH = path.join(TEST_DIR, 'inbound.db');
+
+beforeAll(async () => {
+  await initSql();
+});
 
 function freshDb() {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
@@ -48,25 +53,32 @@ describe('handleRecurrence', () => {
     insertTask(db, {
       id: 'task-1',
       processAfter: '2020-01-01T00:00:00.000Z',
-      recurrence: '0 9 * * *', // every day at 09:00 (user TZ)
+      recurrence: '0 9 * * *',
       platformId: null,
       channelType: null,
       threadId: null,
       content: JSON.stringify({ prompt: 'daily digest' }),
     });
-    db.prepare(`UPDATE messages_in SET status='completed' WHERE id='task-1'`).run();
+    db.run(`UPDATE messages_in SET status='completed' WHERE id='task-1'`);
 
     await handleRecurrence(db, fakeSession());
 
-    const rows = db
-      .prepare(`SELECT id, status, process_after, recurrence, series_id FROM messages_in ORDER BY seq`)
-      .all() as Array<{
+    const stmt = db.prepare(`SELECT id, status, process_after, recurrence, series_id FROM messages_in ORDER BY seq`);
+    const rows: Array<{
       id: string;
       status: string;
       process_after: string;
       recurrence: string | null;
       series_id: string;
-    }>;
+    }> = [];
+    while (stmt.step()) rows.push(stmt.getAsObject() as {
+      id: string;
+      status: string;
+      process_after: string;
+      recurrence: string | null;
+      series_id: string;
+    });
+    stmt.free();
     expect(rows).toHaveLength(2);
     const original = rows.find((r) => r.id === 'task-1')!;
     const follow = rows.find((r) => r.id !== 'task-1')!;
@@ -88,11 +100,15 @@ describe('handleRecurrence', () => {
       threadId: null,
       content: JSON.stringify({ prompt: 'one-off' }),
     });
-    db.prepare(`UPDATE messages_in SET status='completed' WHERE id='task-1'`).run();
+    db.run(`UPDATE messages_in SET status='completed' WHERE id='task-1'`);
 
     await handleRecurrence(db, fakeSession());
 
-    const count = (db.prepare(`SELECT COUNT(*) AS c FROM messages_in`).get() as { c: number }).c;
-    expect(count).toBe(1);
+    const countStmt = db.prepare(`SELECT COUNT(*) AS c FROM messages_in`);
+    const count: { c: number } | undefined = countStmt.step()
+      ? (countStmt.getAsObject() as { c: number })
+      : undefined;
+    countStmt.free();
+    expect(count!.c).toBe(1);
   });
 });

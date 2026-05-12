@@ -155,6 +155,9 @@ export const sendFile: McpToolDefinition = {
 
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve('/workspace/agent', filePath);
     if (!fs.existsSync(resolvedPath)) return err(`File not found: ${filePath}`);
+    if (!resolvedPath.startsWith('/workspace/')) {
+      return err('Path must be within /workspace/');
+    }
 
     const id = generateId();
     const filename = (args.filename as string) || path.basename(resolvedPath);

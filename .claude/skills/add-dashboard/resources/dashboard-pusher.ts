@@ -5,7 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 
 import { getAllAgentGroups, getAgentGroup } from './db/agent-groups.js';
 import { getSessionsByAgentGroup } from './db/sessions.js';
@@ -19,6 +19,8 @@ import { getActiveAdapters, getRegisteredChannelNames } from './channels/channel
 import { DATA_DIR, ASSISTANT_NAME } from './config.js';
 import { getDb } from './db/connection.js';
 import { log } from './log.js';
+
+const _initSqlJs = initSqlJs();
 
 interface PusherConfig {
   port: number;
@@ -106,12 +108,12 @@ function startLogTail(config: PusherConfig): void {
 }
 
 async function push(config: PusherConfig): Promise<void> {
-  const snapshot = collectSnapshot();
+  const snapshot = await collectSnapshot();
   postJson(config, '/api/ingest', snapshot);
   log.debug('Dashboard snapshot pushed');
 }
 
-function collectSnapshot(): Record<string, unknown> {
+async function collectSnapshot(): Promise<Record<string, unknown>> {
   return {
     timestamp: new Date().toISOString(),
     assistant_name: ASSISTANT_NAME,
@@ -122,8 +124,8 @@ function collectSnapshot(): Record<string, unknown> {
     users: collectUsers(),
     tokens: collectTokens(),
     context_windows: collectContextWindows(),
-    activity: collectActivity(),
-    messages: collectMessages(),
+    activity: await collectActivity(),
+    messages: await collectMessages(),
   };
 }
 
@@ -405,7 +407,7 @@ function collectContextWindows() {
   return results;
 }
 
-function collectActivity() {
+async function collectActivity() {
   const now = Date.now();
   const buckets: Record<string, { inbound: number; outbound: number }> = {};
 
@@ -418,7 +420,7 @@ function collectActivity() {
   if (!fs.existsSync(sessionsDir)) return toBucketArray(buckets);
 
   const cutoff = new Date(now - 86400000).toISOString();
-
+  const SQL = await _initSqlJs;
   try {
     for (const agDir of fs.readdirSync(sessionsDir).filter((d) => d.startsWith('ag-'))) {
       const agPath = path.join(sessionsDir, agDir);
@@ -427,13 +429,17 @@ function collectActivity() {
           const dbPath = path.join(agPath, sessDir, dbName);
           if (!fs.existsSync(dbPath)) continue;
           try {
-            const db = new Database(dbPath, { readonly: true });
+            const buf = fs.readFileSync(dbPath);
+            const db = new SQL.Database(buf);
             const table = direction === 'outbound' ? 'messages_out' : 'messages_in';
-            const rows = db.prepare(`SELECT timestamp FROM ${table} WHERE timestamp > ?`).all(cutoff) as { timestamp: string }[];
-            for (const row of rows) {
+            const stmt = db.prepare(`SELECT timestamp FROM ${table} WHERE timestamp > ?`);
+            stmt.bind([cutoff]);
+            while (stmt.step()) {
+              const row = stmt.getAsObject() as { timestamp: string };
               const key = row.timestamp.slice(0, 13);
               if (buckets[key]) buckets[key][direction]++;
             }
+            stmt.free();
             db.close();
           } catch { /* skip */ }
         }
@@ -450,12 +456,13 @@ function toBucketArray(buckets: Record<string, { inbound: number; outbound: numb
     .sort((a, b) => a.hour.localeCompare(b.hour));
 }
 
-function collectMessages() {
+async function collectMessages() {
   const sessionsDir = path.join(DATA_DIR, 'v2-sessions');
   if (!fs.existsSync(sessionsDir)) return [];
 
   const results: Array<{ agentGroupId: string; sessionId: string; inbound: unknown[]; outbound: unknown[] }> = [];
   const limit = 50;
+  const SQL = await _initSqlJs;
 
   try {
     for (const agDir of fs.readdirSync(sessionsDir).filter((d) => d.startsWith('ag-'))) {
@@ -467,9 +474,16 @@ function collectMessages() {
         const inDbPath = path.join(agPath, sessDir, 'inbound.db');
         if (fs.existsSync(inDbPath)) {
           try {
-            const db = new Database(inDbPath, { readonly: true });
-            const rows = db.prepare('SELECT * FROM messages_in ORDER BY seq DESC LIMIT ?').all(limit);
-            inbound.push(...(rows as unknown[]).reverse());
+            const inBuf = fs.readFileSync(inDbPath);
+            const db = new SQL.Database(inBuf);
+            const stmt = db.prepare('SELECT * FROM messages_in ORDER BY seq DESC LIMIT ?');
+            stmt.bind([limit]);
+            const rows: unknown[] = [];
+            while (stmt.step()) {
+              rows.push(stmt.getAsObject());
+            }
+            stmt.free();
+            inbound.push(...rows.reverse());
             db.close();
           } catch { /* skip */ }
         }
@@ -477,9 +491,16 @@ function collectMessages() {
         const outDbPath = path.join(agPath, sessDir, 'outbound.db');
         if (fs.existsSync(outDbPath)) {
           try {
-            const db = new Database(outDbPath, { readonly: true });
-            const rows = db.prepare('SELECT * FROM messages_out ORDER BY seq DESC LIMIT ?').all(limit);
-            outbound.push(...(rows as unknown[]).reverse());
+            const outBuf = fs.readFileSync(outDbPath);
+            const db = new SQL.Database(outBuf);
+            const stmt = db.prepare('SELECT * FROM messages_out ORDER BY seq DESC LIMIT ?');
+            stmt.bind([limit]);
+            const rows: unknown[] = [];
+            while (stmt.step()) {
+              rows.push(stmt.getAsObject());
+            }
+            stmt.free();
+            outbound.push(...rows.reverse());
             db.close();
           } catch { /* skip */ }
         }

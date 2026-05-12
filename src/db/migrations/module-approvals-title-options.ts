@@ -21,7 +21,7 @@ export const moduleApprovalsTitleOptions: Migration = {
   up(db) {
     const addIfMissing = (col: string, sql: string): void => {
       try {
-        db.exec(sql);
+        db.run(sql);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('duplicate column') || msg.includes('already exists')) {

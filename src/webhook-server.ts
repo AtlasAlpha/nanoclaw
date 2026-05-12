@@ -118,6 +118,14 @@ function ensureServer(): void {
     }
   });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      log.error(`Webhook server port ${port} already in use — channel adapters cannot receive webhooks`, { port, err });
+    } else {
+      log.error('Webhook server error', { err });
+    }
+  });
+
   server.listen(port, '0.0.0.0', () => {
     log.info('Webhook server started', { port, adapters: [...routes.keys()] });
   });

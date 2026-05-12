@@ -148,14 +148,8 @@ install_deps() {
     return
   fi
 
-  # Verify native module (better-sqlite3)
-  log "Verifying native modules"
-  if node -e "require('better-sqlite3')" >> "$LOG_FILE" 2>&1; then
-    NATIVE_OK="true"
-    log "better-sqlite3 loads OK"
-  else
-    log "better-sqlite3 failed to load"
-  fi
+  # sql.js is a WASM module — no native compilation needed
+  NATIVE_OK="true"
 }
 
 # --- Build tools check ---

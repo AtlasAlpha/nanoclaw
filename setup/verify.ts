@@ -2,14 +2,14 @@
  * Step: verify — End-to-end health check of the full installation.
  * Replaces 09-verify.sh
  *
- * Uses better-sqlite3 directly (no sqlite3 CLI), platform-aware service checks.
+ * Uses sql.js directly (no sqlite3 CLI), platform-aware service checks.
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 
 import { DATA_DIR } from '../src/config.js';
 import { readEnvFile } from '../src/env.js';
@@ -192,15 +192,17 @@ export async function run(_args: string[]): Promise<void> {
   const dbPath = path.join(DATA_DIR, 'v2.db');
   if (fs.existsSync(dbPath)) {
     try {
-      const db = new Database(dbPath, { readonly: true });
-      // Count agent groups that have at least one messaging group wired
-      const row = db
-        .prepare(
-          `SELECT COUNT(DISTINCT ag.id) as count FROM agent_groups ag
-           JOIN messaging_group_agents mga ON mga.agent_group_id = ag.id`,
-        )
-        .get() as { count: number };
+      const SQL = await initSqlJs();
+      const content = fs.readFileSync(dbPath);
+      const db = new SQL.Database(content);
+      const stmt = db.prepare(
+        `SELECT COUNT(DISTINCT ag.id) as count FROM agent_groups ag
+         JOIN messaging_group_agents mga ON mga.agent_group_id = ag.id`,
+      );
+      stmt.step();
+      const row = stmt.getAsObject() as { count: number };
       registeredGroups = row.count;
+      stmt.free();
       db.close();
     } catch {
       // Table might not exist (DB not migrated yet)

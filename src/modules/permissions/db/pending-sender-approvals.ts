@@ -9,6 +9,7 @@
  * still pending is silently dropped instead of spamming the admin.
  */
 import { getDb } from '../../../db/connection.js';
+import { queryOne } from '../../../db/sql-helpers.js';
 
 export interface PendingSenderApproval {
   id: string;
@@ -26,35 +27,30 @@ export interface PendingSenderApproval {
 }
 
 export function createPendingSenderApproval(row: PendingSenderApproval): void {
-  getDb()
-    .prepare(
-      `INSERT INTO pending_sender_approvals (
-         id, messaging_group_id, agent_group_id, sender_identity,
-         sender_name, original_message, approver_user_id, created_at,
-         title, options_json
-       )
-       VALUES (
-         @id, @messaging_group_id, @agent_group_id, @sender_identity,
-         @sender_name, @original_message, @approver_user_id, @created_at,
-         @title, @options_json
-       )`,
-    )
-    .run(row);
+  getDb().run(
+    `INSERT INTO pending_sender_approvals (
+       id, messaging_group_id, agent_group_id, sender_identity,
+       sender_name, original_message, approver_user_id, created_at,
+       title, options_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [row.id, row.messaging_group_id, row.agent_group_id, row.sender_identity, row.sender_name, row.original_message, row.approver_user_id, row.created_at, row.title, row.options_json],
+  );
 }
 
 export function getPendingSenderApproval(id: string): PendingSenderApproval | undefined {
-  return getDb().prepare('SELECT * FROM pending_sender_approvals WHERE id = ?').get(id) as
-    | PendingSenderApproval
-    | undefined;
+  return queryOne<PendingSenderApproval>(getDb(), 'SELECT * FROM pending_sender_approvals WHERE id = ?', [id]);
 }
 
 export function hasInFlightSenderApproval(messagingGroupId: string, senderIdentity: string): boolean {
-  const row = getDb()
-    .prepare('SELECT 1 AS x FROM pending_sender_approvals WHERE messaging_group_id = ? AND sender_identity = ?')
-    .get(messagingGroupId, senderIdentity) as { x: number } | undefined;
+  const row = queryOne<{ x: number }>(
+    getDb(),
+    'SELECT 1 AS x FROM pending_sender_approvals WHERE messaging_group_id = ? AND sender_identity = ?',
+    [messagingGroupId, senderIdentity],
+  );
   return row !== undefined;
 }
 
 export function deletePendingSenderApproval(id: string): void {
-  getDb().prepare('DELETE FROM pending_sender_approvals WHERE id = ?').run(id);
+  getDb().run('DELETE FROM pending_sender_approvals WHERE id = ?', [id]);
 }

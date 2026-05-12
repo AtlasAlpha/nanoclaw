@@ -14,14 +14,13 @@
  * explicitly, and the router's auto-create path was updated to hardcode
  * `'request_approval'` directly (see src/router.ts:123).
  */
-import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
 
 export const migration011: Migration = {
   version: 11,
   name: 'pending-sender-approvals',
-  up: (db: Database.Database) => {
-    db.exec(`
+  up: (db) => {
+    db.run(`
       CREATE TABLE IF NOT EXISTS pending_sender_approvals (
         id                   TEXT PRIMARY KEY,
         messaging_group_id   TEXT NOT NULL REFERENCES messaging_groups(id),

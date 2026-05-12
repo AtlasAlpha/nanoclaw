@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 
 const SKIP_NAMES = new Set(['CLAUDE.md', 'logs', '.git', '.DS_Store', 'node_modules']);
 
@@ -53,7 +53,7 @@ function copyTree(src: string, dst: string): number {
   return written;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const v1Path = process.argv[2];
   if (!v1Path) {
     console.error('Usage: tsx setup/migrate-v2/groups.ts <v1-path>');
@@ -72,16 +72,21 @@ function main(): void {
   const v1DbPath = path.join(v1Path, 'store', 'messages.db');
   const registeredFolders = new Set<string>();
   if (fs.existsSync(v1DbPath)) {
-    const v1Db = new Database(v1DbPath, { readonly: true, fileMustExist: true });
-    const rows = v1Db
-      .prepare('SELECT folder, container_config FROM registered_groups')
-      .all() as Array<{ folder: string; container_config: string | null }>;
+    const SQL = await initSqlJs();
+    const content = fs.readFileSync(v1DbPath);
+    const v1Db = new SQL.Database(content);
+    const stmt = v1Db.prepare('SELECT folder, container_config FROM registered_groups');
+    const rows: Array<{ folder: string; container_config: string | null }> = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject() as { folder: string; container_config: string | null });
+    }
+    stmt.free();
+    v1Db.close();
     const containerConfigs = new Map<string, string | null>();
     for (const r of rows) {
       registeredFolders.add(r.folder);
       containerConfigs.set(r.folder, r.container_config);
     }
-    v1Db.close();
 
     // Write container.json from v1 container_config.
     // The additionalMounts shape is identical between v1 and v2.

@@ -4,13 +4,15 @@ import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
+
+const SQL = await initSqlJs();
 
 /**
  * Smoke tests for the q.ts sqlite-CLI replacement wrapper.
  *
  * Verifies the two modes (SELECT prints rows in sqlite3 default "list"
- * format; mutation runs via db.exec) and a few edge cases that real
+ * format; mutation runs via db.run) and a few edge cases that real
  * skill invocations rely on.
  */
 
@@ -23,11 +25,13 @@ describe('scripts/q.ts', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'q-test-'));
     dbPath = path.join(tempDir, 'test.db');
-    const db = new Database(dbPath);
-    db.exec(`
+    const db = new SQL.Database();
+    db.run(`
       CREATE TABLE t (id INTEGER, name TEXT, note TEXT);
       INSERT INTO t (id, name, note) VALUES (1, 'alice', 'hi'), (2, 'bob', NULL);
     `);
+    const data = db.export();
+    fs.writeFileSync(dbPath, data);
     db.close();
   });
 
@@ -66,8 +70,12 @@ describe('scripts/q.ts', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
 
-    const db = new Database(dbPath, { readonly: true });
-    const row = db.prepare('SELECT name FROM t WHERE id = 3').get() as { name: string };
+    const data = fs.readFileSync(dbPath);
+    const db = new SQL.Database(data);
+    const stmt = db.prepare('SELECT name FROM t WHERE id = 3');
+    stmt.step();
+    const row = stmt.getAsObject() as { name: string };
+    stmt.free();
     db.close();
     expect(row.name).toBe('carol');
   });
@@ -76,10 +84,14 @@ describe('scripts/q.ts', () => {
     const r = run("DELETE FROM t WHERE id = 1; INSERT INTO t (id, name) VALUES (9, 'zed');");
     expect(r.status).toBe(0);
 
-    const db = new Database(dbPath, { readonly: true });
-    const ids = (db.prepare('SELECT id FROM t ORDER BY id').all() as { id: number }[]).map(
-      (r) => r.id,
-    );
+    const data = fs.readFileSync(dbPath);
+    const db = new SQL.Database(data);
+    const stmt = db.prepare('SELECT id FROM t ORDER BY id');
+    const ids: number[] = [];
+    while (stmt.step()) {
+      ids.push((stmt.getAsObject() as { id: number }).id);
+    }
+    stmt.free();
     db.close();
     expect(ids).toEqual([2, 9]);
   });
@@ -89,8 +101,14 @@ describe('scripts/q.ts', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
 
-    const db = new Database(dbPath, { readonly: true });
-    const rows = db.prepare('SELECT name FROM t').all() as { name: string }[];
+    const data = fs.readFileSync(dbPath);
+    const db = new SQL.Database(data);
+    const stmt = db.prepare('SELECT name FROM t');
+    const rows: { name: string }[] = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject() as { name: string });
+    }
+    stmt.free();
     db.close();
     expect(rows).toEqual([{ name: 'bob' }]);
   });

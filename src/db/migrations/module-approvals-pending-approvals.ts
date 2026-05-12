@@ -19,7 +19,7 @@ export const moduleApprovalsPendingApprovals: Migration = {
   version: 3,
   name: 'pending-approvals',
   up(db) {
-    db.exec(`
+    db.run(`
       CREATE TABLE pending_approvals (
         approval_id         TEXT PRIMARY KEY,
         session_id          TEXT REFERENCES sessions(id),

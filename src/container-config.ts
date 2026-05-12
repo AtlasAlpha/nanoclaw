@@ -103,7 +103,9 @@ export function writeContainerConfig(folder: string, config: ContainerConfig): v
   const p = configPath(folder);
   const dir = path.dirname(p);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(config, null, 2) + '\n');
+  const tmp = p + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n');
+  fs.renameSync(tmp, p);
 }
 
 /**

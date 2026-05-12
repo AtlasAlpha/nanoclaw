@@ -10,12 +10,13 @@
  * sharing series_id. Matching by id alone would only hit the completed row
  * the agent remembers, missing the live next occurrence.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from 'sql.js';
 
+import { queryAll } from '../../db/sql-helpers.js';
 import { nextEvenSeq } from '../../db/session-db.js';
 
 export function insertTask(
-  db: Database.Database,
+  db: Database,
   task: {
     id: string;
     processAfter: string;
@@ -26,31 +27,32 @@ export function insertTask(
     content: string;
   },
 ): void {
-  db.prepare(
+  db.run(
     `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, platform_id, channel_type, thread_id, content, series_id)
-     VALUES (@id, @seq, datetime('now'), 'pending', 0, @processAfter, @recurrence, 'task', @platformId, @channelType, @threadId, @content, @id)`,
-  ).run({
-    ...task,
-    seq: nextEvenSeq(db),
-  });
+     VALUES (?, ?, datetime('now'), 'pending', 0, ?, ?, 'task', ?, ?, ?, ?, ?)`,
+    [task.id, nextEvenSeq(db), task.processAfter, task.recurrence, task.platformId, task.channelType, task.threadId, task.content, task.id],
+  );
 }
 
-export function cancelTask(db: Database.Database, taskId: string): void {
-  db.prepare(
+export function cancelTask(db: Database, taskId: string): void {
+  db.run(
     "UPDATE messages_in SET status = 'completed', recurrence = NULL WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status IN ('pending', 'paused')",
-  ).run(taskId, taskId);
+    [taskId, taskId],
+  );
 }
 
-export function pauseTask(db: Database.Database, taskId: string): void {
-  db.prepare(
+export function pauseTask(db: Database, taskId: string): void {
+  db.run(
     "UPDATE messages_in SET status = 'paused' WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status = 'pending'",
-  ).run(taskId, taskId);
+    [taskId, taskId],
+  );
 }
 
-export function resumeTask(db: Database.Database, taskId: string): void {
-  db.prepare(
+export function resumeTask(db: Database, taskId: string): void {
+  db.run(
     "UPDATE messages_in SET status = 'pending' WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status = 'paused'",
-  ).run(taskId, taskId);
+    [taskId, taskId],
+  );
 }
 
 export interface TaskUpdate {
@@ -64,12 +66,12 @@ export interface TaskUpdate {
 // clobbering other fields. Matches by id OR series_id so the live next
 // occurrence of a recurring task is updated, not just the completed row the
 // agent last saw. Returns the number of rows touched.
-export function updateTask(db: Database.Database, taskId: string, update: TaskUpdate): number {
-  const rows = db
-    .prepare(
-      "SELECT id, content FROM messages_in WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status IN ('pending', 'paused')",
-    )
-    .all(taskId, taskId) as Array<{ id: string; content: string }>;
+export function updateTask(db: Database, taskId: string, update: TaskUpdate): number {
+  const rows = queryAll<{ id: string; content: string }>(
+    db,
+    "SELECT id, content FROM messages_in WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status IN ('pending', 'paused')",
+    [taskId, taskId],
+  );
 
   if (rows.length === 0) return 0;
 
@@ -77,7 +79,8 @@ export function updateTask(db: Database.Database, taskId: string, update: TaskUp
   const setRecurrence = update.recurrence !== undefined;
   const mergeContent = update.prompt !== undefined || update.script !== undefined;
 
-  const tx = db.transaction(() => {
+  db.run('BEGIN');
+  try {
     for (const row of rows) {
       let content = row.content;
       if (mergeContent) {
@@ -87,7 +90,6 @@ export function updateTask(db: Database.Database, taskId: string, update: TaskUp
         content = JSON.stringify(parsed);
       }
 
-      // Build SET clause dynamically so callers can update fields independently.
       const sets: string[] = ['content = ?'];
       const params: unknown[] = [content];
       if (setProcessAfter) {
@@ -100,10 +102,13 @@ export function updateTask(db: Database.Database, taskId: string, update: TaskUp
       }
       params.push(row.id);
 
-      db.prepare(`UPDATE messages_in SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+      db.run(`UPDATE messages_in SET ${sets.join(', ')} WHERE id = ?`, params as never);
     }
-  });
-  tx();
+    db.run('COMMIT');
+  } catch (e) {
+    db.run('ROLLBACK');
+    throw e;
+  }
   return rows.length;
 }
 
@@ -119,35 +124,26 @@ export interface RecurringMessage {
   series_id: string;
 }
 
-export function getCompletedRecurring(db: Database.Database): RecurringMessage[] {
-  return db
-    .prepare("SELECT * FROM messages_in WHERE status = 'completed' AND recurrence IS NOT NULL")
-    .all() as RecurringMessage[];
+export function getCompletedRecurring(db: Database): RecurringMessage[] {
+  return queryAll<RecurringMessage>(
+    db,
+    "SELECT * FROM messages_in WHERE status = 'completed' AND recurrence IS NOT NULL",
+  );
 }
 
 export function insertRecurrence(
-  db: Database.Database,
+  db: Database,
   msg: RecurringMessage,
   newId: string,
   nextRun: string | null,
 ): void {
-  db.prepare(
+  db.run(
     `INSERT INTO messages_in (id, seq, kind, timestamp, status, process_after, recurrence, platform_id, channel_type, thread_id, content, series_id)
      VALUES (?, ?, ?, datetime('now'), 'pending', ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    newId,
-    nextEvenSeq(db),
-    msg.kind,
-    nextRun,
-    msg.recurrence,
-    msg.platform_id,
-    msg.channel_type,
-    msg.thread_id,
-    msg.content,
-    msg.series_id,
+    [newId, nextEvenSeq(db), msg.kind, nextRun, msg.recurrence, msg.platform_id, msg.channel_type, msg.thread_id, msg.content, msg.series_id],
   );
 }
 
-export function clearRecurrence(db: Database.Database, messageId: string): void {
-  db.prepare('UPDATE messages_in SET recurrence = NULL WHERE id = ?').run(messageId);
+export function clearRecurrence(db: Database, messageId: string): void {
+  db.run('UPDATE messages_in SET recurrence = NULL WHERE id = ?', [messageId]);
 }

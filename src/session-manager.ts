@@ -10,7 +10,8 @@
  *   3. One writer per file — DELETE-mode journal-unlink isn't atomic across
  *      the mount; concurrent writers corrupt the DB.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from 'sql.js';
+import { queryOne } from './db/sql-helpers.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -31,6 +32,7 @@ import {
   openInboundDb as openInboundDbRaw,
   openOutboundDb as openOutboundDbRaw,
   openOutboundDbRw as openOutboundDbRwRaw,
+  persistDb,
   upsertSessionRouting,
   insertMessage,
   migrateMessagesInTable,
@@ -178,6 +180,7 @@ export function writeSessionRouting(agentGroupId: string, sessionId: string): vo
       thread_id: session.thread_id,
     });
   } finally {
+    persistDb(db, dbPath);
     db.close();
   }
   log.debug('Session routing written', { sessionId, channelType, platformId, threadId: session.thread_id });
@@ -215,6 +218,7 @@ export function writeSessionMessage(
   // Extract base64 attachment data, save to inbox, replace with file paths
   const content = extractAttachmentFiles(agentGroupId, sessionId, message.id, message.content);
 
+  const dbPath = inboundDbPath(agentGroupId, sessionId);
   const db = openInboundDb(agentGroupId, sessionId);
   try {
     insertMessage(db, {
@@ -230,6 +234,7 @@ export function writeSessionMessage(
       trigger: message.trigger ?? 1,
     });
   } finally {
+    persistDb(db, dbPath);
     db.close();
   }
 
@@ -345,19 +350,19 @@ function extractAttachmentFiles(
 }
 
 /** Open the inbound DB for a session (host reads/writes). */
-export function openInboundDb(agentGroupId: string, sessionId: string): Database.Database {
+export function openInboundDb(agentGroupId: string, sessionId: string): Database {
   const db = openInboundDbRaw(inboundDbPath(agentGroupId, sessionId));
   migrateMessagesInTable(db);
   return db;
 }
 
 /** Open the outbound DB for a session (host reads only). */
-export function openOutboundDb(agentGroupId: string, sessionId: string): Database.Database {
+export function openOutboundDb(agentGroupId: string, sessionId: string): Database {
   return openOutboundDbRaw(outboundDbPath(agentGroupId, sessionId));
 }
 
 /** Open the outbound DB for a session with write access. Only safe to call when no container is running. */
-export function openOutboundDbRw(agentGroupId: string, sessionId: string): Database.Database {
+export function openOutboundDbRw(agentGroupId: string, sessionId: string): Database {
   return openOutboundDbRwRaw(outboundDbPath(agentGroupId, sessionId));
 }
 
@@ -380,11 +385,15 @@ export function writeOutboundDirect(
 ): void {
   const db = openOutboundDb(agentGroupId, sessionId);
   try {
-    db.prepare(
+    const max = queryOne<{ m: number }>(db, 'SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out')?.m ?? 0;
+    const nextEven = max % 2 === 0 ? max + 2 : max + 1;
+    db.run(
       `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
-       VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_out), datetime('now'), ?, ?, ?, ?, ?)`,
-    ).run(message.id, message.kind, message.platformId, message.channelType, message.threadId, message.content);
+       VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
+      [message.id, nextEven, message.kind, message.platformId, message.channelType, message.threadId, message.content],
+    );
   } finally {
+    persistDb(db, outboundDbPath(agentGroupId, sessionId));
     db.close();
   }
 }
@@ -392,7 +401,7 @@ export function writeOutboundDirect(
 /**
  * @deprecated Use openInboundDb / openOutboundDb instead.
  */
-export function openSessionDb(agentGroupId: string, sessionId: string): Database.Database {
+export function openSessionDb(agentGroupId: string, sessionId: string): Database {
   return openInboundDb(agentGroupId, sessionId);
 }
 
@@ -511,6 +520,36 @@ export function clearOutbox(agentGroupId: string, sessionId: string, messageId: 
     fs.rmSync(realOutboxDir, { recursive: true, force: true });
   } catch (err) {
     log.warn('Outbox cleanup failed (message already delivered)', { messageId, err });
+  }
+}
+
+/**
+ * Remove a message's inbox directory after processing. Best-effort:
+ * failures log and swallow.
+ */
+export function clearInbox(agentGroupId: string, sessionId: string, messageId: string): void {
+  if (!isSafeAttachmentName(messageId)) {
+    log.warn('Rejecting unsafe inbox cleanup message id', { messageId });
+    return;
+  }
+
+  const inboxDir = path.join(sessionDir(agentGroupId, sessionId), 'inbox', messageId);
+  if (!fs.existsSync(inboxDir)) return;
+  try {
+    const stat = fs.lstatSync(inboxDir);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      log.warn('Rejecting unsafe inbox cleanup directory', { messageId, inboxDir });
+      return;
+    }
+    const realInboxBase = fs.realpathSync(path.join(sessionDir(agentGroupId, sessionId), 'inbox'));
+    const realInboxDir = fs.realpathSync(inboxDir);
+    if (!isPathInside(realInboxBase, realInboxDir)) {
+      log.warn('Rejecting inbox cleanup outside session inbox', { messageId, inboxDir });
+      return;
+    }
+    fs.rmSync(realInboxDir, { recursive: true, force: true });
+  } catch (err) {
+    log.warn('Inbox cleanup failed', { messageId, err });
   }
 }
 

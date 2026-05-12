@@ -20,8 +20,8 @@ function now(): string {
   return new Date().toISOString();
 }
 
-beforeEach(() => {
-  const db = initTestDb();
+beforeEach(async () => {
+  const db = await initTestDb();
   runMigrations(db);
 });
 

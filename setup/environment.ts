@@ -5,7 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 
 import { log } from '../src/log.js';
 import { commandExists, getPlatform, isHeadless, isWSL } from './platform.js';
@@ -35,16 +35,19 @@ export function readEnvKey(key: string, projectRoot?: string): string | null {
   return null;
 }
 
-export function detectExistingDisplayName(projectRoot: string): string | null {
+export async function detectExistingDisplayName(projectRoot: string): Promise<string | null> {
   const dbPath = path.join(projectRoot, 'data', 'v2.db');
   if (!fs.existsSync(dbPath)) return null;
 
-  let db: Database.Database | null = null;
+  const SQL = await initSqlJs();
+  let db: Database | null = null;
   try {
-    db = new Database(dbPath, { readonly: true });
-    const row = db
-      .prepare(`SELECT display_name FROM users WHERE id = 'cli:local'`)
-      .get() as { display_name: string } | undefined;
+    const content = fs.readFileSync(dbPath);
+    db = new SQL.Database(content);
+    const stmt = db.prepare(`SELECT display_name FROM users WHERE id = 'cli:local'`);
+    stmt.step();
+    const row = stmt.getAsObject() as { display_name: string } | undefined;
+    stmt.free();
     return row?.display_name?.trim() || null;
   } catch {
     return null;
@@ -53,7 +56,7 @@ export function detectExistingDisplayName(projectRoot: string): string | null {
   }
 }
 
-export function detectRegisteredGroups(projectRoot: string): boolean {
+export async function detectRegisteredGroups(projectRoot: string): Promise<boolean> {
   if (fs.existsSync(path.join(projectRoot, 'data', 'registered_groups.json'))) {
     return true;
   }
@@ -61,15 +64,18 @@ export function detectRegisteredGroups(projectRoot: string): boolean {
   const dbPath = path.join(projectRoot, 'data', 'v2.db');
   if (!fs.existsSync(dbPath)) return false;
 
-  let db: Database.Database | null = null;
+  const SQL = await initSqlJs();
+  let db: Database | null = null;
   try {
-    db = new Database(dbPath, { readonly: true });
-    const row = db
-      .prepare(
-        `SELECT COUNT(DISTINCT ag.id) as count FROM agent_groups ag
-         JOIN messaging_group_agents mga ON mga.agent_group_id = ag.id`,
-      )
-      .get() as { count: number };
+    const content = fs.readFileSync(dbPath);
+    db = new SQL.Database(content);
+    const stmt = db.prepare(
+      `SELECT COUNT(DISTINCT ag.id) as count FROM agent_groups ag
+       JOIN messaging_group_agents mga ON mga.agent_group_id = ag.id`,
+    );
+    stmt.step();
+    const row = stmt.getAsObject() as { count: number };
+    stmt.free();
     return row.count > 0;
   } catch {
     return false;
@@ -105,7 +111,7 @@ export async function run(_args: string[]): Promise<void> {
   const authDir = path.join(projectRoot, 'store', 'auth');
   const hasAuth = fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
 
-  const hasRegisteredGroups = detectRegisteredGroups(projectRoot);
+  const hasRegisteredGroups = await detectRegisteredGroups(projectRoot);
 
   // Check for existing OpenClaw installation
   const homedir = (await import('os')).homedir();

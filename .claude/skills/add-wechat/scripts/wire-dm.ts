@@ -19,7 +19,8 @@
  *   --session-mode <m>      shared | per-thread (default: shared)
  *   --non-interactive       Fail instead of prompting
  */
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
+import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
@@ -79,19 +80,26 @@ function generateId(prefix: string): string {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
+  const SQL = await initSqlJs();
+  const buf = fs.existsSync(DB_PATH) ? fs.readFileSync(DB_PATH) : Buffer.alloc(0);
+  const db = new SQL.Database(buf);
+  db.run('PRAGMA journal_mode = WAL');
 
   // 1. Pick the messaging group
   let platformId = args.platformId;
   if (!platformId) {
-    const rows = db.prepare(`
+    const rowStmt = db.prepare(`
       SELECT mg.id, mg.platform_id, mg.name, mg.is_group, mg.created_at
       FROM messaging_groups mg
       LEFT JOIN messaging_group_agents mga ON mga.messaging_group_id = mg.id
       WHERE mg.channel_type = 'wechat' AND mga.id IS NULL
       ORDER BY mg.created_at DESC
-    `).all() as Array<{ id: string; platform_id: string; name: string | null; is_group: number; created_at: string }>;
+    `);
+    const rows: Array<{ id: string; platform_id: string; name: string | null; is_group: number; created_at: string }> = [];
+    while (rowStmt.step()) {
+      rows.push(rowStmt.getAsObject() as typeof rows[0]);
+    }
+    rowStmt.free();
 
     if (rows.length === 0) {
       console.error('No unwired WeChat messaging groups found.');
@@ -114,16 +122,26 @@ async function main(): Promise<void> {
     }
   }
 
-  const mg = db.prepare(
+  const mgStmt = db.prepare(
     'SELECT id, platform_id, is_group FROM messaging_groups WHERE channel_type = ? AND platform_id = ?'
-  ).get('wechat', platformId) as { id: string; platform_id: string; is_group: number } | undefined;
+  );
+  mgStmt.bind(['wechat', platformId]);
+  let mg: { id: string; platform_id: string; is_group: number } | undefined;
+  if (mgStmt.step()) {
+    mg = mgStmt.getAsObject() as { id: string; platform_id: string; is_group: number };
+  }
+  mgStmt.free();
   if (!mg) throw new Error(`no wechat messaging_group with platform_id = ${platformId}`);
 
   // 2. Pick the agent group
   let agentGroupId = args.agentGroupId;
   if (!agentGroupId) {
-    const agents = db.prepare('SELECT id, name, is_admin FROM agent_groups ORDER BY is_admin DESC, created_at ASC')
-      .all() as Array<{ id: string; name: string; is_admin: number }>;
+    const agAllStmt = db.prepare('SELECT id, name, is_admin FROM agent_groups ORDER BY is_admin DESC, created_at ASC');
+    const agents: Array<{ id: string; name: string; is_admin: number }> = [];
+    while (agAllStmt.step()) {
+      agents.push(agAllStmt.getAsObject() as typeof agents[0]);
+    }
+    agAllStmt.free();
     if (agents.length === 0) throw new Error('no agent groups exist — create one first');
 
     const adminAgents = agents.filter((a) => a.is_admin === 1);
@@ -144,25 +162,29 @@ async function main(): Promise<void> {
     }
   }
 
-  const ag = db.prepare('SELECT id, name FROM agent_groups WHERE id = ?').get(agentGroupId) as
-    { id: string; name: string } | undefined;
+  const agGetStmt = db.prepare('SELECT id, name FROM agent_groups WHERE id = ?');
+  agGetStmt.bind([agentGroupId]);
+  let ag: { id: string; name: string } | undefined;
+  if (agGetStmt.step()) {
+    ag = agGetStmt.getAsObject() as { id: string; name: string };
+  }
+  agGetStmt.free();
   if (!ag) throw new Error(`no agent_group with id = ${agentGroupId}`);
 
   // 3. Update sender policy + wire
-  const tx = db.transaction(() => {
-    db.prepare('UPDATE messaging_groups SET unknown_sender_policy = ? WHERE id = ?')
-      .run(args.senderPolicy, mg.id);
-
-    db.prepare(`
-      INSERT INTO messaging_group_agents
-        (id, messaging_group_id, agent_group_id, trigger_rules, response_scope, session_mode, priority, created_at)
-      VALUES (?, ?, ?, '', 'all', ?, 10, datetime('now'))
-    `).run(generateId('mga'), mg.id, ag.id, args.sessionMode);
-  });
-  tx();
+  db.run('BEGIN');
+  db.run('UPDATE messaging_groups SET unknown_sender_policy = ? WHERE id = ?', [args.senderPolicy, mg.id]);
+  db.run(`
+    INSERT INTO messaging_group_agents
+      (id, messaging_group_id, agent_group_id, trigger_rules, response_scope, session_mode, priority, created_at)
+    VALUES (?, ?, ?, '', 'all', ?, 10, datetime('now'))
+  `, [generateId('mga'), mg.id, ag.id, args.sessionMode]);
+  db.run('COMMIT');
 
   console.log('');
   console.log(`WIRED platform_id=${mg.platform_id} agent_group=${ag.name} policy=${args.senderPolicy} mode=${args.sessionMode}`);
+  const data = db.export();
+  fs.writeFileSync(DB_PATH, Buffer.from(data));
   db.close();
 }
 

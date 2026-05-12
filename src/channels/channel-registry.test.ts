@@ -1,13 +1,12 @@
 /**
  * Tests for the v2 channel adapter registry and integration with host.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 import fs from 'fs';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
 
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 
-// Mock container runner
 vi.mock('../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
   isContainerRunning: vi.fn().mockReturnValue(false),
@@ -15,7 +14,6 @@ vi.mock('../container-runner.js', () => ({
   killContainer: vi.fn(),
 }));
 
-// Override DATA_DIR for tests
 vi.mock('../config.js', async () => {
   const actual = await vi.importActual('../config.js');
   return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-channels' };
@@ -23,11 +21,15 @@ vi.mock('../config.js', async () => {
 
 const TEST_DIR = '/tmp/nanoclaw-test-channels';
 
+let SQL: Awaited<ReturnType<typeof initSqlJs>>;
+beforeAll(async () => {
+  SQL = await initSqlJs();
+});
+
 function now() {
   return new Date().toISOString();
 }
 
-/** Create a mock ChannelAdapter for testing. */
 function createMockAdapter(
   channelType: string,
 ): ChannelAdapter & { delivered: OutboundMessage[]; inbound: InboundMessage[] } {
@@ -68,7 +70,6 @@ function createMockAdapter(
 }
 
 describe('channel registry', () => {
-  // Import fresh modules for each test to avoid registry pollution
   beforeEach(async () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
@@ -110,7 +111,6 @@ describe('channel registry', () => {
       onAction: () => {},
     }));
 
-    // Should not have any active adapters for channels with null factory returns
     const active = getActiveAdapters();
     const noCreds = active.find((a) => a.name === 'no-creds');
     expect(noCreds).toBeUndefined();
@@ -124,7 +124,7 @@ describe('channel + router integration', () => {
 
     const { initTestDb, runMigrations, createAgentGroup, createMessagingGroup, createMessagingGroupAgent } =
       await import('../db/index.js');
-    const db = initTestDb();
+    const db = await initTestDb();
     runMigrations(db);
 
     createAgentGroup({
@@ -168,7 +168,6 @@ describe('channel + router integration', () => {
     const { findSession } = await import('../db/sessions.js');
     const { inboundDbPath } = await import('../session-manager.js');
 
-    // Simulate what the adapter bridge does: stringify content, call routeInbound
     const inboundContent = { sender: 'TestUser', senderId: 'u1', text: 'Hello from adapter', isFromMe: false };
 
     await routeInbound({
@@ -183,13 +182,16 @@ describe('channel + router integration', () => {
       },
     });
 
-    // Verify session was created and message written
     const session = findSession('mg-1', null);
     expect(session).toBeDefined();
 
     const dbPath = inboundDbPath('ag-1', session!.id);
-    const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{ id: string; content: string }>;
+    const dbContent = fs.readFileSync(dbPath);
+    const db = new SQL.Database(dbContent);
+    const stmt = db.prepare('SELECT * FROM messages_in');
+    const rows: Array<{ id: string; content: string }> = [];
+    while (stmt.step()) rows.push(stmt.getAsObject() as { id: string; content: string });
+    stmt.free();
     db.close();
 
     expect(rows).toHaveLength(1);
@@ -200,7 +202,6 @@ describe('channel + router integration', () => {
     const { setDeliveryAdapter } = await import('../delivery.js');
     const { getChannelAdapter, registerChannelAdapter, initChannelAdapters } = await import('./channel-registry.js');
 
-    // Register and init a mock adapter
     const mockAdapter = createMockAdapter('mock');
     registerChannelAdapter('mock-delivery', {
       factory: () => mockAdapter,
@@ -214,7 +215,6 @@ describe('channel + router integration', () => {
       onAction: () => {},
     }));
 
-    // Set up delivery adapter bridge (same pattern as index.ts)
     setDeliveryAdapter({
       async deliver(channelType, platformId, threadId, kind, content) {
         const adapter = getChannelAdapter(channelType);
@@ -223,7 +223,6 @@ describe('channel + router integration', () => {
       },
     });
 
-    // Simulate delivery
     const adapter = getChannelAdapter('mock');
     if (adapter) {
       await adapter.deliver('chan-100', null, { kind: 'chat', content: { text: 'Agent response' } });

@@ -13,7 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 
 import { DATA_DIR } from '../../src/config.js';
 import { createAgentGroup, getAgentGroupByFolder } from '../../src/db/agent-groups.js';
@@ -60,13 +60,18 @@ async function main(): Promise<void> {
   }
 
   // Read v1 groups
-  const v1Db = new Database(v1DbPath, { readonly: true, fileMustExist: true });
+  const SQL = await initSqlJs();
+  const content = fs.readFileSync(v1DbPath);
+  const v1Db = new SQL.Database(content);
 
   // v1 schema varies — channel_name was a late addition. Query only the
   // columns we know exist in all v1 installs.
-  const v1Groups = v1Db
-    .prepare('SELECT jid, name, folder, trigger_pattern, requires_trigger, is_main FROM registered_groups')
-    .all() as V1Group[];
+  const stmt = v1Db.prepare('SELECT jid, name, folder, trigger_pattern, requires_trigger, is_main FROM registered_groups');
+  const v1Groups: V1Group[] = [];
+  while (stmt.step()) {
+    v1Groups.push(stmt.getAsObject() as V1Group);
+  }
+  stmt.free();
   v1Db.close();
 
   if (v1Groups.length === 0) {

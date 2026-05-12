@@ -17,10 +17,10 @@
  *   - sender_scope: 'known' when response_scope was 'allowlisted', 'all' otherwise
  *   - ignored_message_policy: 'drop' (conservative default; no old-schema analog)
  */
-import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
 
 import { log } from '../../log.js';
+import { queryAll } from '../sql-helpers.js';
 
 interface LegacyRow {
   id: string;
@@ -61,13 +61,17 @@ function backfill(row: LegacyRow): {
   return { engage_mode, engage_pattern, sender_scope, ignored_message_policy: 'drop' };
 }
 
+const backfillSql = `UPDATE messaging_group_agents
+   SET engage_mode = ?, engage_pattern = ?, sender_scope = ?, ignored_message_policy = ?
+ WHERE id = ?`;
+
 export const migration010: Migration = {
   version: 10,
   name: 'engage-modes',
-  up: (db: Database.Database) => {
+  up: (db) => {
     // Add the four new columns alongside the existing two. SQLite ALTER ADD
     // is cheap and non-rewriting.
-    db.exec(`
+    db.run(`
       ALTER TABLE messaging_group_agents ADD COLUMN engage_mode            TEXT;
       ALTER TABLE messaging_group_agents ADD COLUMN engage_pattern         TEXT;
       ALTER TABLE messaging_group_agents ADD COLUMN sender_scope           TEXT;
@@ -75,25 +79,17 @@ export const migration010: Migration = {
     `);
 
     // Backfill existing rows in JS (parsing JSON per-row is painful in pure SQL).
-    const rows = db
-      .prepare('SELECT id, trigger_rules, response_scope FROM messaging_group_agents')
-      .all() as LegacyRow[];
-    const update = db.prepare(
-      `UPDATE messaging_group_agents
-         SET engage_mode            = ?,
-             engage_pattern         = ?,
-             sender_scope           = ?,
-             ignored_message_policy = ?
-       WHERE id = ?`,
+    const rows = queryAll<LegacyRow>(
+      db,
+      'SELECT id, trigger_rules, response_scope FROM messaging_group_agents',
     );
     for (const row of rows) {
       const v = backfill(row);
-      update.run(v.engage_mode, v.engage_pattern, v.sender_scope, v.ignored_message_policy, row.id);
+      db.run(backfillSql, [v.engage_mode, v.engage_pattern, v.sender_scope, v.ignored_message_policy, row.id]);
     }
 
-    // Drop the legacy columns. DROP COLUMN requires SQLite 3.35+ (2021); our
-    // better-sqlite3 ships a current build.
-    db.exec(`
+    // Drop the legacy columns.
+    db.run(`
       ALTER TABLE messaging_group_agents DROP COLUMN trigger_rules;
       ALTER TABLE messaging_group_agents DROP COLUMN response_scope;
     `);

@@ -7,7 +7,8 @@
  *   - Tracks delivery in inbound.db's `delivered` table (host-owned)
  *   - Never writes to outbound.db — preserves single-writer-per-file invariant
  */
-import type Database from 'better-sqlite3';
+import type { Database } from 'sql.js';
+import { queryOne } from './db/sql-helpers.js';
 
 import { getRunningSessions, getActiveSessions, createPendingQuestion } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
@@ -19,10 +20,11 @@ import {
   markDelivered,
   markDeliveryFailed,
   migrateDeliveredTable,
+  persistDb,
 } from './db/session-db.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
-import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
+import { clearInbox, clearOutbox, inboundDbPath, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
@@ -123,9 +125,7 @@ async function pollActive(): Promise<void> {
 
   try {
     const sessions = getRunningSessions();
-    for (const session of sessions) {
-      await deliverSessionMessages(session);
-    }
+    await Promise.allSettled(sessions.map((s) => deliverSessionMessages(s)));
   } catch (err) {
     log.error('Active delivery poll error', { err });
   }
@@ -138,9 +138,7 @@ async function pollSweep(): Promise<void> {
 
   try {
     const sessions = getActiveSessions();
-    for (const session of sessions) {
-      await deliverSessionMessages(session);
-    }
+    await Promise.allSettled(sessions.map((s) => deliverSessionMessages(s)));
   } catch (err) {
     log.error('Sweep delivery poll error', { err });
   }
@@ -165,8 +163,8 @@ async function drainSession(session: Session): Promise<void> {
   const agentGroup = getAgentGroup(session.agent_group_id);
   if (!agentGroup) return;
 
-  let outDb: Database.Database;
-  let inDb: Database.Database;
+  let outDb: Database;
+  let inDb: Database;
   try {
     outDb = openOutboundDb(agentGroup.id, session.id);
     inDb = openInboundDb(agentGroup.id, session.id);
@@ -191,6 +189,7 @@ async function drainSession(session: Session): Promise<void> {
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
+        persistDb(inDb, inboundDbPath(session.agent_group_id, session.id));
         deliveryAttempts.delete(msg.id);
 
         // Pause the typing indicator after a real user-facing message
@@ -213,6 +212,7 @@ async function drainSession(session: Session): Promise<void> {
             err,
           });
           markDeliveryFailed(inDb, msg.id);
+          persistDb(inDb, inboundDbPath(session.agent_group_id, session.id));
           deliveryAttempts.delete(msg.id);
         } else {
           log.warn('Message delivery failed, will retry', {
@@ -241,7 +241,7 @@ async function deliverMessage(
     content: string;
   },
   session: Session,
-  inDb: Database.Database,
+  inDb: Database,
 ): Promise<string | undefined> {
   if (!deliveryAdapter) {
     log.warn('No delivery adapter configured, dropping message', { id: msg.id });
@@ -296,11 +296,11 @@ async function deliverMessage(
     // origin-chat case is always allowed regardless). Inlined SQL instead
     // of importing `hasDestination` so core doesn't depend on the module.
     if (!isOriginChat && hasTable(getDb(), 'agent_destinations')) {
-      const row = getDb()
-        .prepare(
-          'SELECT 1 FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ? LIMIT 1',
-        )
-        .get(session.agent_group_id, 'channel', mg.id);
+      const row = queryOne<{ '1': number }>(
+        getDb(),
+        'SELECT 1 FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ? LIMIT 1',
+        [session.agent_group_id, 'channel', mg.id],
+      );
       if (!row) {
         throw new Error(
           `unauthorized channel destination: ${session.agent_group_id} cannot send to ${mg.channel_type}/${mg.platform_id}`,
@@ -389,7 +389,7 @@ async function deliverMessage(
 export type DeliveryActionHandler = (
   content: Record<string, unknown>,
   session: Session,
-  inDb: Database.Database,
+  inDb: Database,
 ) => Promise<void>;
 
 const actionHandlers = new Map<string, DeliveryActionHandler>();
@@ -409,7 +409,7 @@ export function registerDeliveryAction(action: string, handler: DeliveryActionHa
 async function handleSystemAction(
   content: Record<string, unknown>,
   session: Session,
-  inDb: Database.Database,
+  inDb: Database,
 ): Promise<void> {
   const action = content.action as string;
   log.info('System action from agent', { sessionId: session.id, action });

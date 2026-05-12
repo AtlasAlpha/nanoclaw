@@ -5,12 +5,17 @@
  * insertRecurrence) live in `src/modules/scheduling/db.test.ts` with the
  * rest of the scheduling module.
  */
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 
 import { migrateMessagesInTable } from './session-db.js';
+
+let SQL: Awaited<ReturnType<typeof initSqlJs>>;
+beforeAll(async () => {
+  SQL = await initSqlJs();
+});
 
 const TEST_DIR = '/tmp/nanoclaw-session-db-test';
 const DB_PATH = path.join(TEST_DIR, 'inbound.db');
@@ -24,9 +29,8 @@ describe('migrateMessagesInTable', () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
 
-    // Build a legacy inbound.db WITHOUT series_id to simulate a pre-fix install.
-    const db = new Database(DB_PATH);
-    db.exec(`
+    const db = new SQL.Database();
+    db.run(`
       CREATE TABLE messages_in (
         id             TEXT PRIMARY KEY,
         seq            INTEGER UNIQUE,
@@ -42,17 +46,21 @@ describe('migrateMessagesInTable', () => {
         content        TEXT NOT NULL
       );
     `);
-    db.prepare(
+    db.run(
       "INSERT INTO messages_in (id, seq, kind, timestamp, status, content) VALUES (?, ?, 'task', datetime('now'), 'pending', '{}')",
-    ).run('legacy-1', 2);
+      ['legacy-1', 2],
+    );
 
     migrateMessagesInTable(db);
     migrateMessagesInTable(db); // idempotent
 
-    const row = db.prepare('SELECT series_id FROM messages_in WHERE id = ?').get('legacy-1') as {
-      series_id: string;
-    };
-    expect(row.series_id).toBe('legacy-1');
+    const stmt = db.prepare('SELECT series_id FROM messages_in WHERE id = ?');
+    stmt.bind(['legacy-1']);
+    const row: { series_id: string } | undefined = stmt.step()
+      ? (stmt.getAsObject() as { series_id: string })
+      : undefined;
+    stmt.free();
+    expect(row!.series_id).toBe('legacy-1');
     db.close();
   });
 });

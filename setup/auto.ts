@@ -318,13 +318,13 @@ async function main(): Promise<void> {
   async function resolveDisplayName(): Promise<string> {
     if (displayName) return displayName;
     const preset = process.env.NANOCLAW_DISPLAY_NAME?.trim();
-    const existing = detectExistingDisplayName(process.cwd());
+    const existing = await detectExistingDisplayName(process.cwd());
     const fallback = process.env.USER?.trim() || 'Operator';
     displayName = preset || existing || (await askDisplayName(fallback));
     return displayName;
   }
 
-  if (!skip.has('cli-agent') && detectRegisteredGroups(process.cwd())) {
+  if (!skip.has('cli-agent') && await detectRegisteredGroups(process.cwd())) {
     skip.add('cli-agent');
     skip.add('first-chat');
   }

@@ -4,7 +4,7 @@
  *
  * Usage: pnpm exec tsx scripts/test-v2-agent.ts
  */
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 import fs from 'fs';
 
 const TEST_DIR = '/tmp/nanoclaw-v2-test';
@@ -14,10 +14,12 @@ const DB_PATH = `${TEST_DIR}/session.db`;
 if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 fs.mkdirSync(TEST_DIR, { recursive: true });
 
+const SQL = await initSqlJs();
+
 // Create session DB
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.exec(`
+const db = new SQL.Database();
+db.run('PRAGMA journal_mode = WAL');
+db.run(`
   CREATE TABLE messages_in (
     id TEXT PRIMARY KEY, kind TEXT NOT NULL, timestamp TEXT NOT NULL,
     status TEXT DEFAULT 'pending', status_changed TEXT, process_after TEXT,
@@ -33,11 +35,13 @@ db.exec(`
 `);
 
 // Insert test message
-db.prepare(`INSERT INTO messages_in (id, kind, timestamp, status, content) VALUES (?, 'chat', datetime('now'), 'pending', ?)`).run(
+db.run(`INSERT INTO messages_in (id, kind, timestamp, status, content) VALUES (?, 'chat', datetime('now'), 'pending', ?)`, [
   'test-1',
   JSON.stringify({ sender: 'Gavriel', text: 'Say "Hello from v2!" and nothing else. Do not use any tools.' }),
-);
+]);
 console.log('✓ Session DB created with test message');
+const data = db.export();
+fs.writeFileSync(DB_PATH, data);
 db.close();
 
 // Set env and run the poll loop
@@ -79,9 +83,23 @@ const resultChecker = setInterval(() => {
 }, 500);
 
 function printResults() {
-  const db2 = new Database(DB_PATH, { readonly: true });
-  const inRows = db2.prepare('SELECT * FROM messages_in').all() as Array<Record<string, unknown>>;
-  const outRows = db2.prepare('SELECT * FROM messages_out').all() as Array<Record<string, unknown>>;
+  const content = fs.readFileSync(DB_PATH);
+  const db2 = new SQL.Database(content);
+  const stmt1 = db2.prepare('SELECT * FROM messages_in');
+  const inRows: Array<Record<string, unknown>> = [];
+  while (stmt1.step()) {
+    inRows.push(stmt1.getAsObject() as Record<string, unknown>);
+  }
+  stmt1.free();
+
+  const stmt2 = db2.prepare('SELECT * FROM messages_out');
+  const outRows: Array<Record<string, unknown>> = [];
+  while (stmt2.step()) {
+    outRows.push(stmt2.getAsObject() as Record<string, unknown>);
+  }
+  stmt2.free();
+  db2.close();
+
   console.log('\n--- messages_in ---');
   for (const r of inRows) {
     console.log(`  [${r.id}] status=${r.status} kind=${r.kind} content=${r.content}`);
@@ -90,7 +108,6 @@ function printResults() {
   for (const r of outRows) {
     console.log(`  [${r.id}] kind=${r.kind} content=${r.content}`);
   }
-  db2.close();
 }
 
 // Start the poll loop (runs forever, we exit from the checker above)

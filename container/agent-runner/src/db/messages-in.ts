@@ -58,7 +58,7 @@ export function getPendingMessages(): MessageInRow[] {
       .prepare(
         `SELECT * FROM messages_in
          WHERE status = 'pending'
-           AND (process_after IS NULL OR datetime(process_after) <= datetime('now'))
+           AND (process_after IS NULL OR process_after <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
          ORDER BY seq DESC
          LIMIT ?`,
       )
@@ -86,7 +86,7 @@ export function markProcessing(ids: string[]): void {
   if (ids.length === 0) return;
   const db = getOutboundDb();
   const stmt = db.prepare(
-    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'processing', datetime('now'))",
+    "INSERT OR IGNORE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'processing', datetime('now'))",
   );
   db.transaction(() => {
     for (const id of ids) stmt.run(id);
@@ -133,9 +133,10 @@ export function findQuestionResponse(questionId: string): MessageInRow | undefin
   const outbound = getOutboundDb();
 
   try {
+    const escaped = questionId.replace(/[%_\\]/g, '\\$&');
     const response = inbound
-      .prepare("SELECT * FROM messages_in WHERE status = 'pending' AND content LIKE ?")
-      .get(`%"questionId":"${questionId}"%`) as MessageInRow | undefined;
+      .prepare("SELECT * FROM messages_in WHERE status = 'pending' AND content LIKE ? ESCAPE '\\'")
+      .get(`%"questionId":"${escaped}"%`) as MessageInRow | undefined;
 
     if (!response) return undefined;
 

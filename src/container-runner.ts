@@ -80,6 +80,8 @@ export function isContainerRunning(sessionId: string): boolean {
  * its next tick. Callers that care (e.g. the router's typing indicator)
  * can branch on the boolean.
  */
+const ensuredAgentGroups = new Set<string>();
+
 export function wakeContainer(session: Session): Promise<boolean> {
   if (activeContainers.has(session.id)) {
     log.debug('Container already running', { sessionId: session.id });
@@ -451,8 +453,10 @@ async function buildContainerArgs(
   // a transient hard failure: if we can't wire the gateway, we don't spawn.
   // The caller (router or host-sweep) catches the throw, leaves the inbound
   // message pending, and the next sweep tick retries.
-  if (agentIdentifier) {
+  // Cached per agent group — only call once per group lifecycle, not per spawn.
+  if (agentIdentifier && !ensuredAgentGroups.has(agentIdentifier)) {
     await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+    ensuredAgentGroups.add(agentIdentifier);
   }
   const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
   if (!onecliApplied) {

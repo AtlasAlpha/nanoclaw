@@ -8,9 +8,9 @@
  * INSERT OR IGNORE in markDelivered makes the DB write idempotent, but
  * the channel API has already fired twice → user sees the message twice.
  */
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
 
 vi.mock('./container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
@@ -29,6 +29,11 @@ const TEST_DIR = '/tmp/nanoclaw-test-delivery';
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from './db/index.js';
 import { resolveSession, outboundDbPath } from './session-manager.js';
 import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
+
+let SQL: Awaited<ReturnType<typeof initSqlJs>>;
+beforeAll(async () => {
+  SQL = await initSqlJs();
+});
 
 function now(): string {
   return new Date().toISOString();
@@ -54,18 +59,23 @@ function seedAgentAndChannel(): void {
 }
 
 function insertOutbound(agentGroupId: string, sessionId: string, msgId: string): void {
-  const db = new Database(outboundDbPath(agentGroupId, sessionId));
-  db.prepare(
+  const dbPath = outboundDbPath(agentGroupId, sessionId);
+  const content = fs.readFileSync(dbPath);
+  const db = new SQL.Database(content);
+  db.run(
     `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
      VALUES (?, datetime('now'), 'chat', 'telegram:123', 'telegram', ?)`,
-  ).run(msgId, JSON.stringify({ text: 'hello' }));
+    [msgId, JSON.stringify({ text: 'hello' })],
+  );
+  const data = db.export();
+  fs.writeFileSync(dbPath, Buffer.from(data));
   db.close();
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
+  const db = await initTestDb();
   runMigrations(db);
 });
 
@@ -84,15 +94,11 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     setDeliveryAdapter({
       async deliver(_channelType, _platformId, _threadId, _kind, content) {
         calls.push(content);
-        // Hold long enough that the second concurrent caller can race the
-        // read-undelivered → markDelivered window.
         await new Promise((r) => setTimeout(r, 100));
         return 'plat-msg-1';
       },
     });
 
-    // Two concurrent calls — simulating active (1s) and sweep (60s) polls
-    // hitting the same running session at the same moment.
     await Promise.all([deliverSessionMessages(session), deliverSessionMessages(session)]);
 
     expect(calls).toHaveLength(1);
@@ -114,18 +120,12 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     await deliverSessionMessages(session);
     expect(calls).toHaveLength(1);
 
-    // Insert a second outbound message and deliver again — the lock from
-    // the first call must have been released.
     insertOutbound('ag-1', session.id, 'out-second');
     await deliverSessionMessages(session);
     expect(calls).toHaveLength(2);
   });
 
   it('does not re-deliver when retried after a successful send (cleanup-after-send safety)', async () => {
-    // If something post-send throws (e.g. outbox cleanup), the message has
-    // still landed on the user's screen — the catch path must not trigger
-    // a re-send. We simulate by having the adapter succeed on the first
-    // call and recording how many times it's invoked across two attempts.
     seedAgentAndChannel();
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
     insertOutbound('ag-1', session.id, 'out-once');
@@ -139,8 +139,6 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     });
 
     await deliverSessionMessages(session);
-    // Re-invoke — should be idempotent because the message is now in the
-    // delivered table; the channel adapter must not be called again.
     await deliverSessionMessages(session);
 
     expect(callCount).toBe(1);

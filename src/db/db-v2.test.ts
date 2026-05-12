@@ -37,8 +37,8 @@ function now() {
   return new Date().toISOString();
 }
 
-beforeEach(() => {
-  const db = initTestDb();
+beforeEach(async () => {
+  const db = await initTestDb();
   runMigrations(db);
 });
 
@@ -49,8 +49,8 @@ afterEach(() => {
 // ── Migrations ──
 
 describe('migrations', () => {
-  it('should be idempotent', () => {
-    const db = initTestDb();
+  it('should be idempotent', async () => {
+    const db = await initTestDb();
     runMigrations(db);
     // Running again should not throw
     runMigrations(db);
