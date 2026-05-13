@@ -87,6 +87,10 @@ pnpm exec tsx scripts/q.ts data/v2.db "SELECT * FROM sessions"
 # Users and roles
 pnpm exec tsx scripts/q.ts data/v2.db "SELECT * FROM users"
 pnpm exec tsx scripts/q.ts data/v2.db "SELECT * FROM user_roles"
+
+# Session continuation (substitute agent group + session ids from the queries above)
+pnpm exec tsx scripts/q.ts "data/v2-sessions/ag-main/sess-<id>/inbound.db" "SELECT id, kind, recurrence, status FROM messages_in WHERE kind='task'"
+pnpm exec tsx scripts/q.ts "data/v2-sessions/ag-main/sess-<id>/outbound.db" "SELECT * FROM session_state"
 ```
 
 ### Check handoff
