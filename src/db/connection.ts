@@ -49,7 +49,7 @@ export function saveDb(): void {
   }
   const data = _db.export();
   fs.writeFileSync(_dbPath, Buffer.from(data));
-  _lastLoadMtime = Date.now();
+  _lastLoadMtime = fs.statSync(_dbPath).mtimeMs;
 }
 
 export async function initDb(dbPath: string): Promise<SqlJsDatabase> {

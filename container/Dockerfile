@@ -110,7 +110,9 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 
 # ---- Entrypoint --------------------------------------------------------------
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Strip CRLF line endings — Windows checkouts produce \r\n which breaks the
+# kernel's shebang interpreter lookup (#!/bin/bash\r → ENOENT).
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # ---- Workspace + permissions -------------------------------------------------
 RUN mkdir -p /workspace/group /workspace/extra && \
