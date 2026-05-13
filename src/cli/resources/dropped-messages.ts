@@ -4,7 +4,8 @@ registerResource({
   name: 'dropped-message',
   plural: 'dropped-messages',
   table: 'unregistered_senders',
-  description: 'Messages from unregistered senders — tracks who was dropped, how many times, and which messaging group. Read-only diagnostic view.',
+  description:
+    'Messages from unregistered senders — tracks who was dropped, how many times, and which messaging group. Read-only diagnostic view.',
   idColumn: 'messaging_group_id',
   columns: [
     { name: 'messaging_group_id', type: 'string', description: 'Messaging group where the message was dropped.' },

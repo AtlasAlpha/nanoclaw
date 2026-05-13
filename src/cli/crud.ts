@@ -81,7 +81,11 @@ function genericGet(def: ResourceDef) {
   return async (args: Record<string, unknown>) => {
     const id = args.id as string;
     if (!id) throw new Error(`${def.name} id is required`);
-    const row = queryOne<Record<string, unknown>>(getDb(), `SELECT ${cols} FROM ${def.table} WHERE ${def.idColumn} = ?`, [id]);
+    const row = queryOne<Record<string, unknown>>(
+      getDb(),
+      `SELECT ${cols} FROM ${def.table} WHERE ${def.idColumn} = ?`,
+      [id],
+    );
     if (!row) throw new Error(`${def.name} not found: ${id}`);
     return row;
   };
@@ -117,7 +121,10 @@ function genericCreate(def: ResourceDef) {
     const colNames = Object.keys(values);
     const placeholders = colNames.map(() => '?');
     const params = colNames.map((c) => values[c]);
-    getDb().run(`INSERT INTO ${def.table} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`, params as never);
+    getDb().run(
+      `INSERT INTO ${def.table} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`,
+      params as never,
+    );
     return values;
   };
 }
@@ -139,16 +146,22 @@ function genericUpdate(def: ResourceDef) {
       }
     }
     if (Object.keys(updates).length === 0) {
-      throw new Error(`nothing to update — provide at least one of: ${updatableCols.map((c) => '--' + c.name.replace(/_/g, '-')).join(', ')}`);
+      throw new Error(
+        `nothing to update — provide at least one of: ${updatableCols.map((c) => '--' + c.name.replace(/_/g, '-')).join(', ')}`,
+      );
     }
 
-    const setClause = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
+    const setClause = Object.keys(updates)
+      .map((k) => `${k} = ?`)
+      .join(', ');
     const params = [...Object.values(updates), id];
     const result = run(getDb(), `UPDATE ${def.table} SET ${setClause} WHERE ${def.idColumn} = ?`, params);
     if (result.changes === 0) throw new Error(`${def.name} not found: ${id}`);
 
     const cols = visibleColumns(def).join(', ');
-    return queryOne<Record<string, unknown>>(getDb(), `SELECT ${cols} FROM ${def.table} WHERE ${def.idColumn} = ?`, [id]);
+    return queryOne<Record<string, unknown>>(getDb(), `SELECT ${cols} FROM ${def.table} WHERE ${def.idColumn} = ?`, [
+      id,
+    ]);
   };
 }
 
