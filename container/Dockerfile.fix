@@ -2,4 +2,5 @@ FROM nanoclaw-agent:latest
 USER root
 COPY container/agent-runner/package.json container/agent-runner/bun.lock /app/
 RUN rm -f /app/bun.lock && cd /app && bun install
+RUN node "$(find /pnpm -name 'install.cjs' -path '*claude*' | head -1)"
 RUN tr -d '\r' < /app/entrypoint.sh > /tmp/entrypoint.sh && mv /tmp/entrypoint.sh /app/entrypoint.sh && chmod +x /app/entrypoint.sh
