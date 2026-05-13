@@ -4,4 +4,12 @@
 
 import './claude.js';
 import './mock.js';
-import './opencode.js';
+
+// OpenCode provider — guarded because @opencode-ai/sdk is optional (installed
+// via bun.lock, may be absent if the image was built before the dep was added).
+try {
+  await import('./opencode.js');
+} catch {
+  // provider not available — createProvider('opencode', ...) will throw a
+  // helpful "No provider registered" error if an agent group uses it.
+}

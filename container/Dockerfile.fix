@@ -1,0 +1,4 @@
+FROM nanoclaw-agent:latest
+USER root
+RUN if [ ! -d /app/node_modules/@opencode-ai ]; then rm -f /app/bun.lock && cd /app && bun install; fi
+RUN tr -d '\r' < /app/entrypoint.sh > /tmp/entrypoint.sh && mv /tmp/entrypoint.sh /app/entrypoint.sh && chmod +x /app/entrypoint.sh
