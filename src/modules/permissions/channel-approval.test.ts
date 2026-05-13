@@ -226,7 +226,9 @@ describe('unknown-channel registration flow', () => {
       if (claimed) break;
     }
 
-    const mga = queryOne(getDb(), 'SELECT * FROM messaging_group_agents WHERE messaging_group_id = ?', [pending.messaging_group_id]) as {
+    const mga = queryOne(getDb(), 'SELECT * FROM messaging_group_agents WHERE messaging_group_id = ?', [
+      pending.messaging_group_id,
+    ]) as {
       engage_mode: string;
       engage_pattern: string | null;
       sender_scope: string;
@@ -240,7 +242,11 @@ describe('unknown-channel registration flow', () => {
     expect(mga.ignored_message_policy).toBe('accumulate');
     expect(mga.agent_group_id).toBe('ag-1');
 
-    const member = queryOne(getDb(), 'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?', ['telegram:caller', 'ag-1']);
+    const member = queryOne(
+      getDb(),
+      'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+      ['telegram:caller', 'ag-1'],
+    );
     expect(member).toBeDefined();
 
     const stillPending = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM pending_channel_approvals');
@@ -272,7 +278,11 @@ describe('unknown-channel registration flow', () => {
       if (claimed) break;
     }
 
-    const mga = queryOne(getDb(), 'SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE messaging_group_id = ?', [pending.messaging_group_id]) as { engage_mode: string; engage_pattern: string };
+    const mga = queryOne(
+      getDb(),
+      'SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE messaging_group_id = ?',
+      [pending.messaging_group_id],
+    ) as { engage_mode: string; engage_pattern: string };
     expect(mga.engage_mode).toBe('pattern');
     expect(mga.engage_pattern).toBe('.');
   });
@@ -303,7 +313,11 @@ describe('unknown-channel registration flow', () => {
     const mg = getMessagingGroupByPlatform('telegram', 'chat-deny');
     expect(mg?.denied_at).not.toBeNull();
     expect(mg?.denied_at).toBeTruthy();
-    const mgaCount = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?', [pending.messaging_group_id]);
+    const mgaCount = queryOne(
+      getDb(),
+      'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?',
+      [pending.messaging_group_id],
+    );
     expect(mgaCount.c).toBe(0);
 
     deliverMock.mockClear();
@@ -337,7 +351,11 @@ describe('unknown-channel registration flow', () => {
       if (claimed) break;
     }
 
-    const mgaCount = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?', [pending.messaging_group_id]);
+    const mgaCount = queryOne(
+      getDb(),
+      'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?',
+      [pending.messaging_group_id],
+    );
     expect(mgaCount.c).toBe(0);
     const stillPending = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM pending_channel_approvals');
     expect(stillPending.c).toBe(1);

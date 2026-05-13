@@ -80,11 +80,9 @@ export class SqliteStateAdapter implements StateAdapter {
   }
 
   async isSubscribed(threadId: string): Promise<boolean> {
-    const row = queryOne<{ '1': number }>(
-      this.db,
-      'SELECT 1 FROM chat_sdk_subscriptions WHERE thread_id = ? LIMIT 1',
-      [threadId],
-    );
+    const row = queryOne<{ '1': number }>(this.db, 'SELECT 1 FROM chat_sdk_subscriptions WHERE thread_id = ? LIMIT 1', [
+      threadId,
+    ]);
     return !!row;
   }
 
@@ -182,11 +180,9 @@ export class SqliteStateAdapter implements StateAdapter {
 
   async queueDepth(threadId: string): Promise<number> {
     const key = `queue:${threadId}`;
-    const row = queryOne<{ count: number }>(
-      this.db,
-      'SELECT COUNT(*) as count FROM chat_sdk_lists WHERE key = ?',
-      [key],
-    );
+    const row = queryOne<{ count: number }>(this.db, 'SELECT COUNT(*) as count FROM chat_sdk_lists WHERE key = ?', [
+      key,
+    ]);
     return row!.count;
   }
 

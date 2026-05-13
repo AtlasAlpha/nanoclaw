@@ -178,9 +178,6 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   let mg: MessagingGroup;
   let agentCount: number;
   if (!found) {
-    // No messaging_groups row. Auto-create only when the message warrants
-    // attention (the bot was addressed — @mention or DM). Plain chatter in
-    // channels we merely sit in stays silent — no row, no DB writes.
     if (!isMention) return;
     const mgId = `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     mg = {

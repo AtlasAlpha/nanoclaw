@@ -76,10 +76,9 @@ probe_os() {
 
 probe_host_deps() {
   local node_modules="$PROJECT_ROOT/node_modules"
-  local native="$node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-  # `better-sqlite3`'s compiled native binding is the canonical proof that
-  # `pnpm install` ran AND the native build step succeeded.
-  if [[ -d "$node_modules" && -f "$native" ]]; then
+  local sqljs="$node_modules/sql.js/dist/sql-wasm.js"
+  # sql.js WASM-based library proves `pnpm install` ran (no native build step)
+  if [[ -d "$node_modules" && -f "$sqljs" ]]; then
     echo "ok"
   else
     echo "missing"

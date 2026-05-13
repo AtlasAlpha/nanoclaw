@@ -24,7 +24,14 @@ import {
 } from './db/session-db.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
-import { clearInbox, clearOutbox, inboundDbPath, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
+import {
+  clearInbox,
+  clearOutbox,
+  inboundDbPath,
+  openInboundDb,
+  openOutboundDb,
+  readOutboxFiles,
+} from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
@@ -406,11 +413,7 @@ export function registerDeliveryAction(action: string, handler: DeliveryActionHa
  * These are written to messages_out because the container can't write to inbound.db.
  * The host applies them to inbound.db here.
  */
-async function handleSystemAction(
-  content: Record<string, unknown>,
-  session: Session,
-  inDb: Database,
-): Promise<void> {
+async function handleSystemAction(content: Record<string, unknown>, session: Session, inDb: Database): Promise<void> {
   const action = content.action as string;
   log.info('System action from agent', { sessionId: session.id, action });
 

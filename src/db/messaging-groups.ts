@@ -23,7 +23,15 @@ export function createMessagingGroup(group: MessagingGroup): void {
   getDb().run(
     `INSERT INTO messaging_groups (id, channel_type, platform_id, name, is_group, unknown_sender_policy, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [group.id, group.channel_type, group.platform_id, group.name, group.is_group, group.unknown_sender_policy, group.created_at],
+    [
+      group.id,
+      group.channel_type,
+      group.platform_id,
+      group.name,
+      group.is_group,
+      group.unknown_sender_policy,
+      group.created_at,
+    ],
   );
 }
 
@@ -125,9 +133,16 @@ export function createMessagingGroupAgent(mga: MessagingGroupAgent): void {
        ?, ?, ?
      )`,
     [
-      mga.id, mga.messaging_group_id, mga.agent_group_id,
-      mga.engage_mode, mga.engage_pattern, mga.sender_scope, mga.ignored_message_policy,
-      mga.session_mode, mga.priority, mga.created_at,
+      mga.id,
+      mga.messaging_group_id,
+      mga.agent_group_id,
+      mga.engage_mode,
+      mga.engage_pattern,
+      mga.sender_scope,
+      mga.ignored_message_policy,
+      mga.session_mode,
+      mga.priority,
+      mga.created_at,
     ],
   );
 

@@ -49,7 +49,7 @@ export function ensureSchema(dbPath: string, schema: 'inbound' | 'outbound'): vo
   db.run('PRAGMA journal_mode = DELETE');
   db.run(schema === 'inbound' ? INBOUND_SCHEMA : OUTBOUND_SCHEMA);
   if (schema === 'inbound') {
-    db.run("CREATE INDEX IF NOT EXISTS idx_messages_in_pending_due ON messages_in(status, trigger, process_after)");
+    db.run('CREATE INDEX IF NOT EXISTS idx_messages_in_pending_due ON messages_in(status, trigger, process_after)');
   }
   persistDb(db, dbPath);
   db.close();
@@ -274,7 +274,10 @@ export interface ContainerState {
  */
 export function getContainerState(outDb: Database): ContainerState | null {
   try {
-    const row = queryOne<ContainerState>(outDb, 'SELECT current_tool, tool_declared_timeout_ms, tool_started_at FROM container_state WHERE id = 1');
+    const row = queryOne<ContainerState>(
+      outDb,
+      'SELECT current_tool, tool_declared_timeout_ms, tool_started_at FROM container_state WHERE id = 1',
+    );
     return row ?? null;
   } catch {
     return null;
@@ -328,9 +331,7 @@ export function markDeliveryFailed(db: Database, messageOutId: string): void {
 
 /** Ensure the delivered table has columns added after initial schema. */
 export function migrateDeliveredTable(db: Database): void {
-  const cols = new Set(
-    queryAll<{ name: string }>(db, "PRAGMA table_info('delivered')").map((c) => c.name),
-  );
+  const cols = new Set(queryAll<{ name: string }>(db, "PRAGMA table_info('delivered')").map((c) => c.name));
   if (!cols.has('platform_message_id')) {
     db.run('ALTER TABLE delivered ADD COLUMN platform_message_id TEXT');
   }
@@ -343,9 +344,7 @@ export function migrateDeliveredTable(db: Database): void {
 // pre-existing session DBs. No-op on fresh installs where the columns are
 // in the baseline schema. Backfills existing rows so invariants hold.
 export function migrateMessagesInTable(db: Database): void {
-  const cols = new Set(
-    queryAll<{ name: string }>(db, "PRAGMA table_info('messages_in')").map((c) => c.name),
-  );
+  const cols = new Set(queryAll<{ name: string }>(db, "PRAGMA table_info('messages_in')").map((c) => c.name));
   if (!cols.has('series_id')) {
     db.run('ALTER TABLE messages_in ADD COLUMN series_id TEXT');
     db.run('UPDATE messages_in SET series_id = id WHERE series_id IS NULL');

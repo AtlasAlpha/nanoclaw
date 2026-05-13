@@ -34,7 +34,18 @@ export function createPendingSenderApproval(row: PendingSenderApproval): void {
        title, options_json
      )
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [row.id, row.messaging_group_id, row.agent_group_id, row.sender_identity, row.sender_name, row.original_message, row.approver_user_id, row.created_at, row.title, row.options_json],
+    [
+      row.id,
+      row.messaging_group_id,
+      row.agent_group_id,
+      row.sender_identity,
+      row.sender_name,
+      row.original_message,
+      row.approver_user_id,
+      row.created_at,
+      row.title,
+      row.options_json,
+    ],
   );
 }
 

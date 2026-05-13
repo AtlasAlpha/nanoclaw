@@ -9,16 +9,47 @@ import { log } from '../log.js';
 let _db: SqlJsDatabase | null = null;
 let _dbPath: string | null = null;
 let _saveInterval: ReturnType<typeof setInterval> | null = null;
+let _lastLoadMtime: number = 0;
 
 export function getDb(): SqlJsDatabase {
   if (!_db) throw new Error('Database not initialized. Call initDb() first.');
   return _db;
 }
 
+function reloadDb(): void {
+  if (!_db || !_dbPath) return;
+  try {
+    const SQL = getSqlJs();
+    const buffer = fs.readFileSync(_dbPath);
+    _db.close();
+    _db = new SQL.Database(buffer);
+    _db.run('PRAGMA journal_mode = WAL');
+    _db.run('PRAGMA foreign_keys = ON');
+    _lastLoadMtime = fs.statSync(_dbPath).mtimeMs;
+    log.info('Central DB reloaded from disk');
+  } catch (err) {
+    log.error('Failed to reload central DB from disk', { err });
+  }
+}
+
 export function saveDb(): void {
   if (!_db || !_dbPath) return;
+  // Check if file was modified externally (e.g. by scripts/q.ts).
+  // If so, reload from disk instead of overwriting — the external change
+  // wins over any unsaved in-memory state from the last ~5s window.
+  try {
+    const stat = fs.statSync(_dbPath);
+    if (stat.mtimeMs > _lastLoadMtime) {
+      log.warn('Central DB was modified externally — reloading from disk');
+      reloadDb();
+      return;
+    }
+  } catch {
+    // File may not exist yet on first save
+  }
   const data = _db.export();
   fs.writeFileSync(_dbPath, Buffer.from(data));
+  _lastLoadMtime = Date.now();
 }
 
 export async function initDb(dbPath: string): Promise<SqlJsDatabase> {
@@ -29,6 +60,7 @@ export async function initDb(dbPath: string): Promise<SqlJsDatabase> {
   _db.run('PRAGMA journal_mode = WAL');
   _db.run('PRAGMA foreign_keys = ON');
   _dbPath = dbPath;
+  _lastLoadMtime = fs.existsSync(dbPath) ? fs.statSync(dbPath).mtimeMs : 0;
   // Periodically flush to disk so crashes don't lose recent writes
   _saveInterval = setInterval(() => saveDb(), 5000);
   _saveInterval.unref();
@@ -59,6 +91,8 @@ export function closeDb(): void {
  * instead of raising SQLite errors.
  */
 export function hasTable(db: SqlJsDatabase, name: string): boolean {
-  const row = queryOne<{ '1': number }>(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1", [name]);
+  const row = queryOne<{ '1': number }>(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1", [
+    name,
+  ]);
   return row !== undefined;
 }

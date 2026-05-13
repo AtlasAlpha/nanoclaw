@@ -71,13 +71,16 @@ describe('handleRecurrence', () => {
       recurrence: string | null;
       series_id: string;
     }> = [];
-    while (stmt.step()) rows.push(stmt.getAsObject() as {
-      id: string;
-      status: string;
-      process_after: string;
-      recurrence: string | null;
-      series_id: string;
-    });
+    while (stmt.step())
+      rows.push(
+        stmt.getAsObject() as {
+          id: string;
+          status: string;
+          process_after: string;
+          recurrence: string | null;
+          series_id: string;
+        },
+      );
     stmt.free();
     expect(rows).toHaveLength(2);
     const original = rows.find((r) => r.id === 'task-1')!;
@@ -105,9 +108,7 @@ describe('handleRecurrence', () => {
     await handleRecurrence(db, fakeSession());
 
     const countStmt = db.prepare(`SELECT COUNT(*) AS c FROM messages_in`);
-    const count: { c: number } | undefined = countStmt.step()
-      ? (countStmt.getAsObject() as { c: number })
-      : undefined;
+    const count: { c: number } | undefined = countStmt.step() ? (countStmt.getAsObject() as { c: number }) : undefined;
     countStmt.free();
     expect(count!.c).toBe(1);
   });

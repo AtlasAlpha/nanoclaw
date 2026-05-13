@@ -11,7 +11,9 @@ export function createDestination(row: AgentDestination): void {
 }
 
 export function getDestinations(agentGroupId: string): AgentDestination[] {
-  return queryAll<AgentDestination>(getDb(), 'SELECT * FROM agent_destinations WHERE agent_group_id = ?', [agentGroupId]);
+  return queryAll<AgentDestination>(getDb(), 'SELECT * FROM agent_destinations WHERE agent_group_id = ?', [
+    agentGroupId,
+  ]);
 }
 
 export function getDestinationByName(agentGroupId: string, localName: string): AgentDestination | undefined {
@@ -44,10 +46,7 @@ export function hasDestination(agentGroupId: string, targetType: 'channel' | 'ag
 }
 
 export function deleteDestination(agentGroupId: string, localName: string): void {
-  getDb().run('DELETE FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?', [
-    agentGroupId,
-    localName,
-  ]);
+  getDb().run('DELETE FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?', [agentGroupId, localName]);
 }
 
 export function deleteAllDestinationsTouching(agentGroupId: string): void {

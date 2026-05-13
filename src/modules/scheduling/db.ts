@@ -30,7 +30,17 @@ export function insertTask(
   db.run(
     `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, platform_id, channel_type, thread_id, content, series_id)
      VALUES (?, ?, datetime('now'), 'pending', 0, ?, ?, 'task', ?, ?, ?, ?, ?)`,
-    [task.id, nextEvenSeq(db), task.processAfter, task.recurrence, task.platformId, task.channelType, task.threadId, task.content, task.id],
+    [
+      task.id,
+      nextEvenSeq(db),
+      task.processAfter,
+      task.recurrence,
+      task.platformId,
+      task.channelType,
+      task.threadId,
+      task.content,
+      task.id,
+    ],
   );
 }
 
@@ -131,16 +141,22 @@ export function getCompletedRecurring(db: Database): RecurringMessage[] {
   );
 }
 
-export function insertRecurrence(
-  db: Database,
-  msg: RecurringMessage,
-  newId: string,
-  nextRun: string | null,
-): void {
+export function insertRecurrence(db: Database, msg: RecurringMessage, newId: string, nextRun: string | null): void {
   db.run(
     `INSERT INTO messages_in (id, seq, kind, timestamp, status, process_after, recurrence, platform_id, channel_type, thread_id, content, series_id)
      VALUES (?, ?, ?, datetime('now'), 'pending', ?, ?, ?, ?, ?, ?, ?)`,
-    [newId, nextEvenSeq(db), msg.kind, nextRun, msg.recurrence, msg.platform_id, msg.channel_type, msg.thread_id, msg.content, msg.series_id],
+    [
+      newId,
+      nextEvenSeq(db),
+      msg.kind,
+      nextRun,
+      msg.recurrence,
+      msg.platform_id,
+      msg.channel_type,
+      msg.thread_id,
+      msg.content,
+      msg.series_id,
+    ],
   );
 }
 

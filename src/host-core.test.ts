@@ -298,12 +298,15 @@ describe('session manager', () => {
       status: string;
       content: string;
     }> = [];
-    while (stmt.step()) rows.push(stmt.getAsObject() as {
-      id: string;
-      kind: string;
-      status: string;
-      content: string;
-    });
+    while (stmt.step())
+      rows.push(
+        stmt.getAsObject() as {
+          id: string;
+          kind: string;
+          status: string;
+          content: string;
+        },
+      );
     stmt.free();
     db.close();
 

@@ -142,7 +142,7 @@ messaging apps → host process (router) → inbound.db → container (Bun, Clau
 
 A single Node host orchestrates per-session agent containers. When a message arrives, the host routes it via the entity model (user → messaging group → agent group → session), writes it to the session's `inbound.db`, and wakes the container. The agent-runner inside the container polls `inbound.db`, runs Claude, and writes responses to `outbound.db`. The host polls `outbound.db` and delivers back through the channel adapter.
 
-Two SQLite files per session, each with exactly one writer — no cross-mount contention, no IPC, no stdin piping. Channels and alternative providers self-register at startup; trunk ships the registry and the Chat SDK bridge, while the adapters themselves are skill-installed per fork.
+Two SQLite files per session, each with exactly one writer — no cross-mount contention, no IPC, no stdin piping. The host uses sql.js (WASM-based, in-memory with file persistence) in place of native better-sqlite3, avoiding native compilation issues and ensuring cross-platform compatibility. The container uses Bun's built-in bun:sqlite. Channels and alternative providers self-register at startup; trunk ships the registry and the Chat SDK bridge, while the adapters themselves are skill-installed per fork.
 
 For the full architecture writeup see [docs/architecture.md](docs/architecture.md); for the three-level isolation model see [docs/isolation-model.md](docs/isolation-model.md).
 

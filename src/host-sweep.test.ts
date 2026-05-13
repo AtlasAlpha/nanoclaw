@@ -266,9 +266,7 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
     expect(getProcessingClaims(outDb)).toEqual([]);
     const stmt = inDb.prepare('SELECT tries FROM messages_in WHERE id = ?');
     stmt.bind(['m-2']);
-    const row: { tries: number } | undefined = stmt.step()
-      ? (stmt.getAsObject() as { tries: number })
-      : undefined;
+    const row: { tries: number } | undefined = stmt.step() ? (stmt.getAsObject() as { tries: number }) : undefined;
     stmt.free();
     expect(row!.tries).toBe(1);
   });

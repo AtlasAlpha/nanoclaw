@@ -149,7 +149,6 @@ This should be rare. When a zero-day fix or critical dependency requires an imme
 
 `onlyBuiltDependencies` restricts which packages can execute install/postinstall scripts. Only packages on this list are permitted to run build scripts during `pnpm install`. Currently allowed:
 
-- `better-sqlite3` — compiles native SQLite bindings
 - `esbuild` — downloads platform-specific binary
 - `protobufjs` — generates protobuf bindings (used by Baileys/libsignal)
 - `sharp` — downloads platform-specific image processing binary

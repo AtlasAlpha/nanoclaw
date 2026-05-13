@@ -218,7 +218,11 @@ describe('unknown-sender request_approval flow', () => {
       if (claimed) break;
     }
 
-    const member = queryOne(getDb(), 'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?', ['tg:stranger', 'ag-1']);
+    const member = queryOne(
+      getDb(),
+      'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+      ['tg:stranger', 'ag-1'],
+    );
     expect(member).toBeDefined();
 
     const stillPending = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM pending_sender_approvals');
@@ -252,7 +256,11 @@ describe('unknown-sender request_approval flow', () => {
 
     const count = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM pending_sender_approvals');
     expect(count.c).toBe(0);
-    const member = queryOne(getDb(), 'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?', ['tg:stranger', 'ag-1']);
+    const member = queryOne(
+      getDb(),
+      'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+      ['tg:stranger', 'ag-1'],
+    );
     expect(member).toBeUndefined();
   });
 
@@ -279,7 +287,11 @@ describe('unknown-sender request_approval flow', () => {
       if (claimed) break;
     }
 
-    const member = queryOne(getDb(), 'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?', ['tg:stranger', 'ag-1']);
+    const member = queryOne(
+      getDb(),
+      'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+      ['tg:stranger', 'ag-1'],
+    );
     expect(member).toBeUndefined();
 
     const stillPending = queryOne(getDb(), 'SELECT COUNT(*) AS c FROM pending_sender_approvals');
@@ -318,7 +330,11 @@ describe('unknown-sender request_approval flow', () => {
       if (claimed) break;
     }
 
-    const member = queryOne(getDb(), 'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?', ['tg:stranger', 'ag-1']);
+    const member = queryOne(
+      getDb(),
+      'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+      ['tg:stranger', 'ag-1'],
+    );
     expect(member).toBeDefined();
   });
 });

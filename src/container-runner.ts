@@ -454,15 +454,18 @@ async function buildContainerArgs(
   // The caller (router or host-sweep) catches the throw, leaves the inbound
   // message pending, and the next sweep tick retries.
   // Cached per agent group — only call once per group lifecycle, not per spawn.
-  if (agentIdentifier && !ensuredAgentGroups.has(agentIdentifier)) {
-    await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-    ensuredAgentGroups.add(agentIdentifier);
+  // Skip if OneCLI isn't configured (no URL/key) — the container uses direct env var auth instead.
+  if (ONECLI_URL && ONECLI_API_KEY) {
+    if (agentIdentifier && !ensuredAgentGroups.has(agentIdentifier)) {
+      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+      ensuredAgentGroups.add(agentIdentifier);
+    }
+    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
+    if (!onecliApplied) {
+      throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
+    }
+    log.info('OneCLI gateway applied', { containerName });
   }
-  const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-  if (!onecliApplied) {
-    throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
-  }
-  log.info('OneCLI gateway applied', { containerName });
 
   // Host gateway
   args.push(...hostGatewayArgs());

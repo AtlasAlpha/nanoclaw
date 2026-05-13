@@ -31,7 +31,15 @@ export function createPendingChannelApproval(row: PendingChannelApproval): void 
        approver_user_id, created_at, title, options_json
      )
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [row.messaging_group_id, row.agent_group_id, row.original_message, row.approver_user_id, row.created_at, row.title, row.options_json],
+    [
+      row.messaging_group_id,
+      row.agent_group_id,
+      row.original_message,
+      row.approver_user_id,
+      row.created_at,
+      row.title,
+      row.options_json,
+    ],
   );
 }
 
@@ -53,7 +61,11 @@ export function hasInFlightChannelApproval(messagingGroupId: string): boolean {
 }
 
 export function updatePendingChannelApprovalCard(messagingGroupId: string, title: string, optionsJson: string): void {
-  getDb().run('UPDATE pending_channel_approvals SET title = ?, options_json = ? WHERE messaging_group_id = ?', [title, optionsJson, messagingGroupId]);
+  getDb().run('UPDATE pending_channel_approvals SET title = ?, options_json = ? WHERE messaging_group_id = ?', [
+    title,
+    optionsJson,
+    messagingGroupId,
+  ]);
 }
 
 export function deletePendingChannelApproval(messagingGroupId: string): void {

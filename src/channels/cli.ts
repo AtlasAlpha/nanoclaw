@@ -35,6 +35,7 @@
  */
 import fs from 'fs';
 import net from 'net';
+import os from 'os';
 import path from 'path';
 
 import { DATA_DIR } from '../config.js';
@@ -58,6 +59,11 @@ function createAdapter(): ChannelAdapter {
     supportsThreads: false,
 
     async setup(config: ChannelSetup): Promise<void> {
+      // Unix sockets don't work on Windows — skip gracefully
+      if (os.platform() === 'win32') {
+        log.warn('CLI channel not supported on Windows (Unix sockets required)');
+        return;
+      }
       const sock = socketPath();
 
       // Stale socket cleanup: a previous run that crashed may have left the

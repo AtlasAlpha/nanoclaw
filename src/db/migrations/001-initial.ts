@@ -51,7 +51,7 @@ export const migration001: Migration = {
         role           TEXT NOT NULL,
         agent_group_id TEXT REFERENCES agent_groups(id),
         granted_by     TEXT REFERENCES users(id),
-        granted_at     TEXT NOT NULL,
+        granted_at     TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (user_id, role, agent_group_id)
       );
       CREATE INDEX idx_user_roles_scope ON user_roles(agent_group_id, role);

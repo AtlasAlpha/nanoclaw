@@ -21,7 +21,11 @@ export function revokeRole(userId: string, role: UserRoleKind, agentGroupId: str
   if (agentGroupId === null) {
     getDb().run('DELETE FROM user_roles WHERE user_id = ? AND role = ? AND agent_group_id IS NULL', [userId, role]);
   } else {
-    getDb().run('DELETE FROM user_roles WHERE user_id = ? AND role = ? AND agent_group_id = ?', [userId, role, agentGroupId]);
+    getDb().run('DELETE FROM user_roles WHERE user_id = ? AND role = ? AND agent_group_id = ?', [
+      userId,
+      role,
+      agentGroupId,
+    ]);
   }
 }
 

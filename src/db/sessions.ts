@@ -9,9 +9,15 @@ const sessionInsertSql = `INSERT INTO sessions (id, agent_group_id, messaging_gr
 
 export function createSession(session: Session): void {
   getDb().run(sessionInsertSql, [
-    session.id, session.agent_group_id, session.messaging_group_id,
-    session.thread_id, session.agent_provider, session.status,
-    session.container_status, session.last_active, session.created_at,
+    session.id,
+    session.agent_group_id,
+    session.messaging_group_id,
+    session.thread_id,
+    session.agent_provider,
+    session.status,
+    session.container_status,
+    session.last_active,
+    session.created_at,
   ]);
 }
 
@@ -116,9 +122,15 @@ export function createPendingQuestion(pq: PendingQuestion): boolean {
     `INSERT OR IGNORE INTO pending_questions (question_id, session_id, message_out_id, platform_id, channel_type, thread_id, title, options_json, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      pq.question_id, pq.session_id, pq.message_out_id,
-      pq.platform_id, pq.channel_type, pq.thread_id,
-      pq.title, JSON.stringify(pq.options), pq.created_at,
+      pq.question_id,
+      pq.session_id,
+      pq.message_out_id,
+      pq.platform_id,
+      pq.channel_type,
+      pq.thread_id,
+      pq.title,
+      JSON.stringify(pq.options),
+      pq.created_at,
     ],
   );
   return getDb().getRowsModified() > 0;
@@ -183,11 +195,7 @@ export function createPendingApproval(
 }
 
 export function getPendingApproval(approvalId: string): PendingApproval | undefined {
-  return queryOne<PendingApproval>(
-    getDb(),
-    'SELECT * FROM pending_approvals WHERE approval_id = ?',
-    [approvalId],
-  );
+  return queryOne<PendingApproval>(getDb(), 'SELECT * FROM pending_approvals WHERE approval_id = ?', [approvalId]);
 }
 
 export function updatePendingApprovalStatus(approvalId: string, status: PendingApproval['status']): void {

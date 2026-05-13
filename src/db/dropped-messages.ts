@@ -33,14 +33,22 @@ export function recordDroppedMessage(msg: {
        reason = excluded.reason,
        message_count = unregistered_senders.message_count + 1,
        last_seen = excluded.last_seen`,
-    [msg.channel_type, msg.platform_id, msg.user_id, msg.sender_name, msg.reason, msg.messaging_group_id, msg.agent_group_id, now, now],
+    [
+      msg.channel_type,
+      msg.platform_id,
+      msg.user_id,
+      msg.sender_name,
+      msg.reason,
+      msg.messaging_group_id,
+      msg.agent_group_id,
+      now,
+      now,
+    ],
   );
 }
 
 export function getUnregisteredSenders(limit = 50): UnregisteredSender[] {
-  return queryAll<UnregisteredSender>(
-    getDb(),
-    'SELECT * FROM unregistered_senders ORDER BY last_seen DESC LIMIT ?',
-    [limit],
-  );
+  return queryAll<UnregisteredSender>(getDb(), 'SELECT * FROM unregistered_senders ORDER BY last_seen DESC LIMIT ?', [
+    limit,
+  ]);
 }

@@ -14,7 +14,10 @@ export function upsertUserDm(row: UserDm): void {
 }
 
 export function getUserDm(userId: string, channelType: string): UserDm | undefined {
-  return queryOne<UserDm>(getDb(), 'SELECT * FROM user_dms WHERE user_id = ? AND channel_type = ?', [userId, channelType]);
+  return queryOne<UserDm>(getDb(), 'SELECT * FROM user_dms WHERE user_id = ? AND channel_type = ?', [
+    userId,
+    channelType,
+  ]);
 }
 
 export function getUserDmsForUser(userId: string): UserDm[] {

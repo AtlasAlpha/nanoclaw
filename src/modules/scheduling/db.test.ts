@@ -93,7 +93,8 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
 
     const liveStmt = db.prepare("SELECT id, status, recurrence FROM messages_in WHERE status = 'pending'");
     const live: Array<{ id: string; status: string; recurrence: string | null }> = [];
-    while (liveStmt.step()) live.push(liveStmt.getAsObject() as { id: string; status: string; recurrence: string | null });
+    while (liveStmt.step())
+      live.push(liveStmt.getAsObject() as { id: string; status: string; recurrence: string | null });
     liveStmt.free();
     expect(live).toHaveLength(0);
 
@@ -167,9 +168,7 @@ describe('updateTask', () => {
 
     const stmt = db.prepare('SELECT content FROM messages_in WHERE id = ?');
     stmt.bind(['task-1']);
-    const row: { content: string } | undefined = stmt.step()
-      ? (stmt.getAsObject() as { content: string })
-      : undefined;
+    const row: { content: string } | undefined = stmt.step() ? (stmt.getAsObject() as { content: string }) : undefined;
     stmt.free();
     const parsed = JSON.parse(row!.content);
     expect(parsed.prompt).toBe('new');

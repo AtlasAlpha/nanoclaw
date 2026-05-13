@@ -54,6 +54,15 @@ import './channels/index.js';
 // append registry-based modules. Imported for side effects (registrations).
 import './modules/index.js';
 
+// CLI resource barrel — each resource self-registers via registerResource().
+// Must be imported after initDb() call below, but the imports are safe at
+// module scope since registration is side-effect-only (no DB access until
+// a command handler is invoked).
+import './cli/resources/index.js';
+import { registerResourceHelpCommands } from './cli/commands/help.js';
+// Register per-resource help commands (must run after resources barrel)
+registerResourceHelpCommands();
+
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
 import { initChannelAdapters, teardownChannelAdapters, getChannelAdapter } from './channels/channel-registry.js';
 
